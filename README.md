@@ -1,386 +1,353 @@
-# Unitree G1 Communication Architecture (Simple Explanation)
+# Unitree G1 Communication Architecture
 
 ## Overview
 
-The Unitree G1 robot communicates with four main components:
+The Unitree G1 communication architecture consists of four major components:
 
 1. **Cloud Service**
-2. **G1 Robot**
+2. **Unitree G1 Robot**
 3. **Unitree Explore Mobile App**
-4. **Developer PC (ROS2/DDS Applications)**
+4. **External Development PC**
 
-The cloud mainly handles **user accounts, software updates, fault monitoring, and helping establish remote connections**, while the robot and mobile app exchange real-time data using **WebRTC**.
+The cloud handles user management, OTA updates, fault monitoring, and remote connection setup. The robot uses DDS middleware internally, while developers can access the robot through DDS or ROS2 on the developer computer (PC2).
 
 ---
 
 # Overall Architecture
 
-```mermaid
-flowchart LR
+<p align="center">
+  <img src="images/unitree_g1_architecture.png"
+       alt="Unitree G1 Communication Architecture"
+       width="1200">
+</p>
 
-    Cloud["☁️ Cloud Service"]
-
-    subgraph G1["🤖 Unitree G1 Robot"]
-        OTA["OTA Module"]
-        BLE["BLE Module"]
-        WEBRTC["WebRTC Module"]
-
-        DDS["DDS Middleware"]
-
-        Sensors["Sensors<br/>Motors, IMU, LiDAR,<br/>Camera"]
-
-        PC1["PC1<br/>(Motion Control)<br/>Not Open"]
-        PC2["PC2<br/>(Developer Computer)"]
-
-        Sensors --> DDS
-        OTA --> DDS
-        BLE --> DDS
-        WEBRTC --> DDS
-        DDS --> PC1
-        DDS --> PC2
-    end
-
-    App["📱 Unitree Explore App"]
-
-    Dev["💻 Developer PC<br/>ROS2 / DDS / GST"]
-
-    Cloud <-- MQTT --> OTA
-
-    Cloud <-- HTTP --> App
-
-    Cloud -. WebRTC Signaling .- WEBRTC
-
-    App <-- WebRTC --> WEBRTC
-
-    App <-- BLE --> BLE
-
-    Dev <-- DDS/ROS2 --> PC2
-```
+*Figure: Unitree G1 communication architecture showing interactions between the cloud platform, mobile app, robot subsystems, and external development environments.*
 
 ---
 
-# Main Components
+# Cloud Service
 
-## ☁️ Cloud Service
+The cloud service provides three main functions:
 
-The cloud does **three main jobs**.
+## 1. Robot Monitoring
 
-### 1. Robot Monitoring
+The robot periodically uploads operational information to the cloud, including:
 
-The robot sends:
-
-- Battery status
-- Error logs
+- Fault information
+- Device status
 - Software version
-- Hardware status
+- System statistics
 
-The cloud checks for problems and keeps statistics.
+The cloud performs:
 
-**It does NOT collect private camera data.**
+- Fault detection
+- Health monitoring
+- Usage statistics
 
----
-
-### 2. Remote Access
-
-When you control the robot from another location:
-
-```
-Phone
-   │
-Internet
-   │
-Cloud
-   │
-Robot
-```
-
-The cloud helps establish the connection.
-
-After that, the robot and phone communicate directly using **WebRTC** whenever possible.
-
-If a direct connection cannot be established, the TURN server forwards the data.
+> Privacy-sensitive data such as camera streams are not collected or analyzed by the cloud.
 
 ---
 
-### 3. OTA Updates
+## 2. Remote Robot Access
 
-OTA (Over-The-Air) updates allow the robot to download new firmware without using a USB cable.
+The cloud assists users in remotely accessing the robot.
+
+The primary communication channel is WebRTC.
+
+Responsibilities include:
+
+- Device discovery
+- Connection establishment
+- WebRTC signaling
+- Connection management
+
+Whenever possible, data is transmitted directly between the robot and the mobile application.
+
+If direct communication is not possible due to NAT or firewall restrictions, a TURN server forwards the traffic.
 
 ---
 
-# Cloud Communication Services
+## 3. OTA (Over-The-Air) Updates
+
+The cloud platform provides:
+
+- Firmware updates
+- Software upgrades
+- Security patches
+- Feature updates
+
+without requiring physical access to the robot.
+
+---
+
+# Cloud Communication Components
 
 ## MQTT Server
 
-MQTT is used for lightweight communication.
+MQTT is used for lightweight device communication.
 
-Responsible for:
+Responsibilities:
 
-- Robot status
-- Error reporting
-- Software updates
-- WebRTC signaling
+- Fault reporting
+- Status monitoring
+- OTA update notifications
+- WebRTC signaling forwarding
 
-It **does not send camera video**.
+Example messages:
 
-Example:
-
-```
-Robot:
-Battery = 35%
-
-Cloud:
-Update available
-
-Robot:
-Downloading...
-```
+- Battery status
+- Error reports
+- Upgrade commands
 
 ---
 
 ## HTTP Web API
 
-Used between:
+The HTTP service connects:
 
 - Mobile App
-- Cloud
+- Web Frontend
+- Cloud Platform
 
-Responsible for:
+Responsibilities:
 
-- User login
+- User authentication
 - Robot registration
-- User account
-- Robot binding
+- User-robot binding
+- Device management
 
 ---
 
 ## TURN/STUN Server
 
-WebRTC tries to make a direct connection.
+Used for WebRTC connectivity.
 
-```
-Phone  <--------> Robot
-```
+### STUN
 
-If direct communication fails:
+Helps devices discover their public network addresses.
 
-```
-Phone
-   │
-TURN Server
-   │
-Robot
-```
+### TURN
 
-TURN forwards all traffic.
-
-STUN helps both devices discover each other's public IP address.
+Relays traffic when direct peer-to-peer communication cannot be established.
 
 ---
 
-# Inside the G1 Robot
+# Unitree G1 Robot
 
-The robot contains several communication modules.
+The G1 robot contains several communication and processing modules.
 
 ---
 
 ## OTA Module
 
-Responsible for
+Responsible for:
 
-- Checking updates
-- Reporting faults
-- Communicating with MQTT
+- Firmware upgrades
+- Software updates
+- Fault reporting
+- MQTT communication
 
 ---
 
-## BLE Module (Bluetooth)
+## BLE Module
 
-Bluetooth Low Energy is mainly used for:
+BLE (Bluetooth Low Energy) is used for:
 
-- First-time setup
-- Wi-Fi configuration
-- Robot verification
+- Initial setup
+- Network configuration
+- User verification
+- Device pairing
 
-Example:
-
-```
-Phone
-   │
-Bluetooth
-   │
-Robot
-```
-
-Once Wi-Fi is configured, Bluetooth is rarely needed.
+Typically used only during first-time configuration.
 
 ---
 
 ## WebRTC Module
 
-This is the main communication channel.
+The primary real-time communication channel.
 
-It transfers:
+Transfers:
 
-- Camera video
-- Audio
-- LiDAR point cloud
-- Robot status
+- Video streams
+- Audio streams
+- LiDAR point clouds
+- Robot status information
 - Motion commands
-
-Example:
-
-```
-Phone
-   │
-WebRTC
-   │
-Robot
-```
 
 ---
 
 # DDS Middleware
 
-DDS (Data Distribution Service) is the robot's internal communication system.
+DDS (Data Distribution Service) serves as the internal communication backbone of the robot.
 
-Instead of every program talking directly to every other program, everything communicates through DDS.
+All major robot subsystems communicate through DDS.
 
-```
-Camera
-    │
-    ▼
- DDS Middleware
-    ▲
-    │
-Navigation
+DDS distributes:
 
-LiDAR
-    │
-    ▼
- DDS Middleware
-    ▲
-    │
-Obstacle Avoidance
-
-Motor Controller
-    │
-    ▼
- DDS Middleware
-```
-
-DDS makes software modular and easy to extend.
+- Sensor data
+- Motion commands
+- Localization information
+- Point cloud data
+- AI outputs
+- Multimedia streams
 
 ---
 
-# Sensors
+# Robot Functional Modules
 
-Robot sensors include:
+The DDS middleware connects multiple robot services.
 
-- Motors
-- Cameras
-- LiDAR
-- IMU
-- Other hardware
+## Basic Services
 
-Many sensors first communicate through **Serial**.
-
-```
-Motor
-   │
-Serial
-   │
-DDS
-```
-
-DDS then shares the data with other software.
+Core system functionality.
 
 ---
 
-# PC1 vs PC2
+## LiDAR Point Cloud
 
-The G1 EDU robot contains **two computers**.
+Provides:
+
+- Environment perception
+- Mapping
+- Localization
+- Obstacle detection
 
 ---
 
-## PC1
+## Motion Control
 
-Reserved for Unitree.
-
-Runs:
+Responsible for:
 
 - Walking
 - Balancing
-- Low-level motor control
-
-Developers **cannot modify** this computer.
+- Joint control
+- Gait execution
 
 ---
 
-## PC2
+## Functional Modules
 
-Developer computer.
+Higher-level applications such as:
 
-Default IP:
+- Navigation
+- Speech recognition
+- Obstacle avoidance
+- Path planning
+- Human-robot interaction
 
-```
+---
+
+## Multimedia Services
+
+Handles:
+
+- Camera streams
+- Audio streams
+- Media processing
+
+---
+
+# Sensors and Hardware Layer
+
+Sensor information is collected from:
+
+- Motors
+- Encoders
+- IMU
+- LiDAR
+- Cameras
+- Other onboard sensors
+
+Most hardware devices communicate through serial interfaces before data is published into DDS.
+
+---
+
+# PC1 and PC2
+
+The G1 EDU version contains two onboard computers.
+
+---
+
+## PC1 (Internal Controller)
+
+Reserved for Unitree software.
+
+Runs:
+
+- Motion control
+- Balance control
+- Low-level robot functions
+
+Not accessible for user development.
+
+---
+
+## PC2 (Developer Computer)
+
+Available for secondary development.
+
+Developers can deploy:
+
+- ROS2 applications
+- DDS applications
+- AI models
+- Navigation systems
+- Vision systems
+
+Default IP address:
+
+```text
 192.168.123.164
 ```
-
-Developers run:
-
-- ROS2
-- AI
-- Navigation
-- Object Detection
-- Voice Assistant
-- Custom Software
 
 ---
 
 # Unitree Explore Mobile App
 
-The mobile app contains three modules.
+The mobile application contains three major modules.
 
 ---
 
 ## User Management
 
-Uses HTTP.
+Communicates with the cloud via HTTP.
 
 Responsible for:
 
 - Login
-- User account
+- Authentication
 - Robot binding
-- Cloud communication
+- Device management
 
 ---
 
-## Bluetooth
+## Bluetooth Module
 
 Used for:
 
-- Robot setup
+- Initial robot setup
 - Wi-Fi configuration
+- Security verification
 
 ---
 
-## WebRTC
+## WebRTC Module
 
-Responsible for:
+Provides real-time communication with the robot.
 
-- Live video
-- Audio
+Supports:
+
+- Video streaming
+- Audio streaming
+- Point cloud visualization
 - Robot control
-- LiDAR point cloud
-- Robot status
+- Status monitoring
 
 ---
 
-# Development Interfaces
+# External Development Interface
 
-Developers have three options.
+Developers can interact with the robot using three interfaces.
 
 ---
 
@@ -391,128 +358,140 @@ Supports:
 - C++
 - Python
 
-Provides direct access to DDS topics.
+Provides direct DDS access.
+
+Useful for:
+
+- Sensor data access
+- Custom control systems
+- Middleware integration
 
 ---
 
 ## ROS2 SDK
 
-Since DDS is compatible with ROS2, developers can write normal ROS2 nodes.
+DDS is compatible with ROS2.
 
-Example:
+Developers can create standard ROS2 nodes for:
 
-```
-Camera Node
-      │
-LiDAR Node
-      │
-Navigation Node
-      │
-Robot
-```
+- Navigation
+- SLAM
+- Perception
+- AI applications
+- Human-robot interaction
 
 ---
 
 ## GST SDK
 
-GST (GStreamer)
+GStreamer-based interface.
 
-Used only for:
+Used primarily for:
 
-- Camera streaming
 - Video transmission
+- Multimedia streaming
 
 ---
 
-# Typical Data Flow
+# Typical Communication Flow
 
-## Example: Remote Robot Control
+## Remote Robot Operation
 
-```
-1. User opens the Unitree App
+### Step 1
 
-        │
+The user opens the Unitree Explore App.
 
-2. App logs into Cloud (HTTP)
+### Step 2
 
-        │
+The app authenticates with the cloud through HTTP APIs.
 
-3. Cloud identifies the robot
+### Step 3
 
-        │
+The cloud identifies the robot associated with the user account.
 
-4. Cloud establishes WebRTC signaling
+### Step 4
 
-        │
+MQTT and WebRTC signaling establish the communication channel.
 
-5. Phone ↔ Robot communicate using WebRTC
+### Step 5
 
-        │
+A WebRTC connection is created between:
 
-6. Robot passes data into DDS
+- Mobile App
+- Robot WebRTC Module
 
-        │
+### Step 6
 
-7. DDS distributes data to all modules
+Real-time data begins flowing:
 
-        │
+- Video
+- Audio
+- Point clouds
+- Robot telemetry
+- Control commands
 
-8. Motion controller executes commands
-```
+### Step 7
+
+Inside the robot, DDS distributes the data to the appropriate modules.
+
+### Step 8
+
+Motion controllers and functional modules execute the received commands.
 
 ---
 
 # Communication Protocol Summary
 
 | Protocol | Purpose |
-|----------|---------|
-| MQTT | Robot status, faults, OTA updates, signaling |
-| HTTP | Login, account management, robot binding |
-| WebRTC | Video, audio, point cloud, control commands |
-| BLE | Robot setup and Wi-Fi configuration |
-| DDS | Internal communication inside the robot |
-| Serial | Sensor to DDS communication |
+|-----------|----------|
+| MQTT | Device monitoring, OTA updates, fault reporting, signaling |
+| HTTP | User authentication, robot binding, cloud APIs |
+| WebRTC | Real-time audio, video, telemetry, and control |
+| BLE | Device setup and network configuration |
+| DDS | Internal robot communication |
+| Serial | Sensor and hardware communication |
 
 ---
 
-# Developer Summary
+# Developer Workflow
 
-As a developer, you only work on **PC2**.
+A typical development workflow on the G1 EDU platform is:
 
-Typical workflow:
-
+```text
+Developer Application
+        │
+        ▼
+     ROS2 Node
+        │
+        ▼
+        DDS
+        │
+        ▼
+Robot Sensors / Actuators
 ```
-Your ROS2 Node
-       │
-ROS2 Topics
-       │
-DDS Middleware
-       │
-Robot Sensors & Actuators
-```
 
-You can develop:
+Applications can include:
 
-- Navigation
+- Autonomous navigation
 - SLAM
-- Object Detection
-- Voice Assistant
-- AI Applications
-- Human-Robot Interaction
-- Custom Behaviors
+- Object detection
+- Human tracking
+- Voice assistants
+- AI agents
+- Custom robot behaviors
 
-without modifying the robot's internal motion controller running on PC1.
+without modifying Unitree's proprietary motion-control software running on PC1.
 
 ---
 
 # Key Takeaways
 
-- **Cloud** manages users, OTA updates, fault monitoring, and remote connection setup.
-- **MQTT** handles lightweight robot messaging.
-- **HTTP** is used for user accounts and robot binding.
-- **WebRTC** provides real-time communication (video, audio, robot control).
-- **DDS** is the robot's internal messaging system.
-- **BLE** is mainly used for initial setup.
-- **PC1** runs Unitree's proprietary motion control software.
-- **PC2** is the developer computer where custom applications are deployed.
-- **ROS2** applications work naturally because DDS is the underlying communication middleware.
+- Cloud services manage users, updates, and remote connectivity.
+- MQTT handles lightweight device communication.
+- HTTP manages user accounts and robot registration.
+- WebRTC carries real-time video, audio, telemetry, and control commands.
+- DDS is the robot's internal communication backbone.
+- BLE is mainly used during initial setup.
+- PC1 is reserved for Unitree's internal motion control software.
+- PC2 is available for developer applications.
+- ROS2 applications can directly integrate with the robot through DDS.
