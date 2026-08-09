@@ -1,0 +1,7 @@
+[submodule "g1-ros2-workspace/src/unitree_mujoco"]
+	path = g1-ros2-workspace/src/unitree_mujoco
+	url = https://github.com/RafiMAA/unitree_mujoco.git
+	branch = g1-navigation-sensors
+[submodule "g1-ros2-workspace/unitree_rl_mjlab"]
+	path = g1-ros2-workspace/unitree_rl_mjlab
+	url = https://github.com/unitreerobotics/unitree_rl_mjlab.git

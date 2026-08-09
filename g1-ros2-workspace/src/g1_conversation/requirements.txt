@@ -1,0 +1,31 @@
+# g1_conversation — Python dependencies
+# Install with: pip install -r requirements.txt
+
+# LangChain
+langchain>=0.3.0
+langchain-google-genai>=4.0.0
+langchain-community>=0.3.0
+langchain-text-splitters>=0.3.0
+
+# Vector Store
+faiss-cpu>=1.7.4
+
+# Speech-to-Text (Whisper local)
+faster-whisper>=1.1.0
+openai-whisper>=20231117
+
+# Text-to-Speech
+edge-tts>=6.1.0
+
+# Audio I/O
+sounddevice>=0.4.6
+soundfile>=0.12.1
+pygame>=2.5.0
+
+# Voice Activity Detection
+webrtcvad>=2.0.10
+
+# Utilities
+numpy>=1.24.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0

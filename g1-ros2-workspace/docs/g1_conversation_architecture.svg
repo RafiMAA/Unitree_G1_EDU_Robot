@@ -1,0 +1,248 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="diagram-title diagram-desc">
+  <title id="diagram-title">Current Unitree G1 PickMe conversation architecture</title>
+  <desc id="diagram-desc">Startup onboarding, neural speech processing, direct retrieval augmented generation, multilingual speech, ROS 2 motion integration, and privacy boundaries.</desc>
+
+  <defs>
+    <linearGradient id="header-gradient" x1="0" x2="1">
+      <stop offset="0" stop-color="#ffc629"/>
+      <stop offset="1" stop-color="#ffe73f"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#102435" flood-opacity="0.13"/>
+    </filter>
+    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#248454"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7654a8"/>
+    </marker>
+    <style>
+      .title { font-family: Arial, sans-serif; font-size: 36px; font-weight: 700; fill: #111820; }
+      .subtitle { font-family: Arial, sans-serif; font-size: 16px; fill: #33414c; }
+      .section { font-family: Arial, sans-serif; font-size: 21px; font-weight: 700; fill: #133e5c; }
+      .head { font-family: Arial, sans-serif; font-size: 18px; font-weight: 700; fill: #142f43; }
+      .body { font-family: Arial, sans-serif; font-size: 15px; fill: #27475e; }
+      .small { font-family: Arial, sans-serif; font-size: 13px; fill: #496477; }
+      .tiny { font-family: Arial, sans-serif; font-size: 12px; fill: #526a7a; }
+      .mono { font-family: Consolas, monospace; font-size: 13px; fill: #27475e; }
+      .badge { font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 0.8px; }
+      .panel { fill: #ffffff; stroke: #d9e2e8; stroke-width: 1.5; }
+      .startup { fill: #f5f8fb; stroke: #57748a; stroke-width: 2; }
+      .audio { fill: #effaf3; stroke: #31945a; stroke-width: 2.5; }
+      .local { fill: #eef7fd; stroke: #267ca8; stroke-width: 2.5; }
+      .cloud { fill: #fff7e7; stroke: #d98a12; stroke-width: 2.5; }
+      .session { fill: #f5f0fc; stroke: #7955a7; stroke-width: 2.5; }
+      .motion { fill: #fff8d8; stroke: #c99c00; stroke-width: 2.5; }
+      .flow { fill: none; stroke: #248454; stroke-width: 3; marker-end: url(#arrow-green); }
+      .feedback { fill: none; stroke: #697d8c; stroke-width: 2.5; stroke-dasharray: 8 7; marker-end: url(#arrow-green); }
+      .raglink { fill: none; stroke: #7654a8; stroke-width: 2.5; stroke-dasharray: 8 7; marker-end: url(#arrow-purple); }
+      .rule { stroke: #d7e0e6; stroke-width: 1; }
+    </style>
+  </defs>
+
+  <rect width="1920" height="1080" fill="#f3f6f8"/>
+
+  <!-- Header -->
+  <rect x="24" y="18" width="1872" height="91" rx="18" fill="#ffc629" filter="url(#shadow)"/>
+  <circle cx="67" cy="54" r="16" fill="#111820"/>
+  <path d="M50 77 C44 58, 41 48, 46 43 C51 39, 56 48, 61 57 C68 69, 78 73, 90 82" fill="none" stroke="#111820" stroke-width="13" stroke-linecap="round"/>
+  <text x="120" y="58" class="title">Unitree G1 · PickMe Conversation System</text>
+  <text x="122" y="84" class="subtitle">Current implementation: deterministic onboarding → local speech pipeline → direct RAG → multilingual reply + synchronized robot motion</text>
+
+  <circle cx="1528" cy="48" r="6" fill="#267ca8"/>
+  <text x="1541" y="53" class="badge" fill="#173b51">LOCAL</text>
+  <circle cx="1620" cy="48" r="6" fill="#d98a12"/>
+  <text x="1633" y="53" class="badge" fill="#62400a">CLOUD</text>
+  <circle cx="1726" cy="48" r="6" fill="#7955a7"/>
+  <text x="1739" y="53" class="badge" fill="#392752">SESSION / ROS</text>
+
+  <!-- A. Startup and onboarding -->
+  <text x="42" y="143" class="section">A. Immediate greeting and deterministic onboarding</text>
+  <rect x="35" y="158" width="1850" height="171" rx="16" class="panel"/>
+
+  <rect x="55" y="181" width="290" height="126" rx="13" class="startup"/>
+  <text x="200" y="207" text-anchor="middle" class="head">1 · ROS 2 node startup</text>
+  <text x="200" y="231" text-anchor="middle" class="body">Load runtime parameters + Silero</text>
+  <text x="200" y="253" text-anchor="middle" class="body">Preload faster-whisper small</text>
+  <text x="200" y="276" text-anchor="middle" class="small">Background conversation thread</text>
+  <text x="200" y="296" text-anchor="middle" class="small">No separate passenger detector</text>
+
+  <rect x="395" y="181" width="310" height="126" rx="13" class="motion"/>
+  <rect x="412" y="192" width="105" height="18" rx="9" fill="#111820"/>
+  <text x="464" y="205" text-anchor="middle" class="badge" fill="#ffc629">CONCURRENT</text>
+  <text x="550" y="231" text-anchor="middle" class="head">2 · Greeting + wave</text>
+  <text x="550" y="255" text-anchor="middle" class="body">“Hello! Ayubowan … What’s your name?”</text>
+  <text x="550" y="278" text-anchor="middle" class="small">TTS starts as gesture commands publish</text>
+  <text x="550" y="298" text-anchor="middle" class="small">Sport API 7106 + g1/gesture_command</text>
+
+  <rect x="755" y="181" width="300" height="126" rx="13" class="session"/>
+  <text x="905" y="207" text-anchor="middle" class="head">3 · awaiting_name</text>
+  <text x="905" y="232" text-anchor="middle" class="body">English STT hint for the answer</text>
+  <text x="905" y="255" text-anchor="middle" class="small">Parser extracts only the person’s name</text>
+  <text x="905" y="277" text-anchor="middle" class="small">Handles “my name is / my nameis …”</text>
+  <text x="905" y="298" text-anchor="middle" class="small">Friendly retry when no valid name is found</text>
+
+  <rect x="1105" y="181" width="310" height="126" rx="13" class="session"/>
+  <text x="1260" y="207" text-anchor="middle" class="head">4 · awaiting_language</text>
+  <text x="1260" y="232" text-anchor="middle" class="body">Auto-detect answer + language aliases</text>
+  <text x="1260" y="255" text-anchor="middle" class="small">EN · FR · DE · ES · RU · JA · ZH</text>
+  <text x="1260" y="277" text-anchor="middle" class="small">KO · HI · SI · TA</text>
+  <text x="1260" y="298" text-anchor="middle" class="small">Localized PickMe introduction follows</text>
+
+  <rect x="1465" y="181" width="400" height="126" rx="13" class="session"/>
+  <text x="1665" y="207" text-anchor="middle" class="head">5 · Active passenger session</text>
+  <text x="1665" y="232" text-anchor="middle" class="body">name · language · stage · turn · session ID</text>
+  <text x="1665" y="255" text-anchor="middle" class="small">RAG history: last 4 question/answer pairs</text>
+  <text x="1665" y="277" text-anchor="middle" class="small">Explicit language switches stay available</text>
+  <text x="1665" y="298" text-anchor="middle" class="small">Goodbye or idle timeout clears the session</text>
+
+  <path d="M345 244 H385" class="flow"/>
+  <path d="M705 244 H745" class="flow"/>
+  <path d="M1055 244 H1095" class="flow"/>
+  <path d="M1415 244 H1455" class="flow"/>
+
+  <!-- B. Active loop -->
+  <text x="42" y="367" class="section">B. Interactive turn loop — records until natural end of speech</text>
+  <rect x="35" y="382" width="1850" height="268" rx="16" class="panel"/>
+
+  <rect x="50" y="406" width="205" height="137" rx="13" class="audio"/>
+  <text x="152" y="432" text-anchor="middle" class="head">Passenger + mic</text>
+  <text x="152" y="458" text-anchor="middle" class="body">Wait up to 90 s</text>
+  <text x="152" y="481" text-anchor="middle" class="small">4 s = progress log only</text>
+  <text x="152" y="503" text-anchor="middle" class="small">16 kHz mono PCM</text>
+  <rect x="107" y="516" width="91" height="18" rx="9" fill="#d8f0e1"/>
+  <text x="152" y="529" text-anchor="middle" class="badge" fill="#226840">AUDIO</text>
+
+  <rect x="280" y="406" width="245" height="137" rx="13" class="local"/>
+  <text x="402" y="432" text-anchor="middle" class="head">Silero v6 neural VAD</text>
+  <text x="402" y="457" text-anchor="middle" class="body">512 samples = 32 ms</text>
+  <text x="402" y="480" text-anchor="middle" class="small">Start 0.50 · continue 0.35</text>
+  <text x="402" y="502" text-anchor="middle" class="small">4/6 onset · ≈0.93 s silence end</text>
+  <text x="402" y="524" text-anchor="middle" class="small">No post-start recording cap</text>
+
+  <rect x="550" y="406" width="230" height="137" rx="13" class="local"/>
+  <text x="665" y="432" text-anchor="middle" class="head">faster-whisper STT</text>
+  <text x="665" y="457" text-anchor="middle" class="body">small · CPU · INT8</text>
+  <text x="665" y="480" text-anchor="middle" class="small">Beam 1 · temperature 0</text>
+  <text x="665" y="502" text-anchor="middle" class="small">No previous-text conditioning</text>
+  <text x="665" y="524" text-anchor="middle" class="small">Audio stays on the robot</text>
+
+  <rect x="805" y="406" width="235" height="137" rx="13" class="session"/>
+  <text x="922" y="432" text-anchor="middle" class="head">Deterministic router</text>
+  <text x="922" y="457" text-anchor="middle" class="body">Use onboarding stage + intent</text>
+  <text x="922" y="480" text-anchor="middle" class="small">Active question → Direct RAG</text>
+  <text x="922" y="502" text-anchor="middle" class="small">Language request → switch session</text>
+  <text x="922" y="524" text-anchor="middle" class="small">Goodbye / timeout → clear session</text>
+
+  <rect x="1065" y="406" width="245" height="137" rx="13" class="local"/>
+  <text x="1187" y="432" text-anchor="middle" class="head">Direct RAG</text>
+  <text x="1187" y="457" text-anchor="middle" class="body">Embed query · FAISS top 3</text>
+  <text x="1187" y="480" text-anchor="middle" class="small">Facts + language + name</text>
+  <text x="1187" y="502" text-anchor="middle" class="small">4-pair history + current question</text>
+  <text x="1187" y="524" text-anchor="middle" class="small">Exactly one generation request</text>
+
+  <rect x="1335" y="406" width="245" height="137" rx="13" class="cloud"/>
+  <text x="1457" y="432" text-anchor="middle" class="head">Gemini response</text>
+  <text x="1457" y="457" text-anchor="middle" class="body">3.5 Flash-Lite · minimal thinking</text>
+  <text x="1457" y="480" text-anchor="middle" class="small">96 tokens · temperature 0.2</text>
+  <text x="1457" y="502" text-anchor="middle" class="small">12 s timeout · 1 retry</text>
+  <text x="1457" y="524" text-anchor="middle" class="small">Stream ≤2 short sentences</text>
+
+  <rect x="1605" y="406" width="260" height="137" rx="13" class="cloud"/>
+  <text x="1735" y="432" text-anchor="middle" class="head">Edge TTS → speaker</text>
+  <text x="1735" y="457" text-anchor="middle" class="body">Selected multilingual voice</text>
+  <text x="1735" y="480" text-anchor="middle" class="small">Sentence lookahead while playing</text>
+  <text x="1735" y="502" text-anchor="middle" class="small">Combine short text (≤260 chars)</text>
+  <text x="1735" y="524" text-anchor="middle" class="small">Schema-aware local audio cache</text>
+
+  <path d="M255 474 H270" class="flow"/>
+  <path d="M525 474 H540" class="flow"/>
+  <path d="M780 474 H795" class="flow"/>
+  <path d="M1040 474 H1055" class="flow"/>
+  <path d="M1310 474 H1325" class="flow"/>
+  <path d="M1580 474 H1595" class="flow"/>
+
+  <rect x="805" y="571" width="226" height="39" rx="10" fill="#f5f0fc" stroke="#a890c6"/>
+  <text x="918" y="595" text-anchor="middle" class="small">Switch language → rebuild RAG session</text>
+  <path d="M900 543 V561" class="raglink"/>
+  <rect x="1050" y="571" width="218" height="39" rx="10" fill="#fff2f1" stroke="#c77a72"/>
+  <text x="1159" y="595" text-anchor="middle" class="small">Goodbye / 90 s idle → end + clear</text>
+  <path d="M944 543 V555 H1159 V561" fill="none" stroke="#7654a8" stroke-width="2.5" stroke-dasharray="8 7" marker-end="url(#arrow-purple)"/>
+
+  <path d="M1735 543 V626 H152 V553" class="feedback"/>
+  <rect x="1330" y="613" width="235" height="23" rx="11" fill="#edf2f5"/>
+  <text x="1447" y="629" text-anchor="middle" class="tiny">0.5 s speaker echo guard → next turn</text>
+
+  <!-- C. Knowledge and retrieval -->
+  <text x="42" y="687" class="section">C. Trusted PickMe knowledge preparation and runtime retrieval</text>
+  <rect x="35" y="702" width="1850" height="183" rx="16" class="panel"/>
+
+  <rect x="55" y="725" width="290" height="136" rx="13" class="session"/>
+  <text x="200" y="751" text-anchor="middle" class="head">4 maintained Markdown files</text>
+  <text x="200" y="776" text-anchor="middle" class="body">Services · app installation</text>
+  <text x="200" y="798" text-anchor="middle" class="small">Sri Lanka locations · robot concierge</text>
+  <text x="200" y="821" text-anchor="middle" class="small">Current build: 45 document chunks</text>
+  <text x="200" y="843" text-anchor="middle" class="small">Source + section metadata retained</text>
+
+  <rect x="390" y="725" width="240" height="136" rx="13" class="local"/>
+  <text x="510" y="751" text-anchor="middle" class="head">Recursive chunking</text>
+  <text x="510" y="780" text-anchor="middle" class="body">500 characters</text>
+  <text x="510" y="805" text-anchor="middle" class="body">50-character overlap</text>
+  <text x="510" y="833" text-anchor="middle" class="small">Rebuild only when KB changes</text>
+
+  <rect x="675" y="725" width="280" height="136" rx="13" class="cloud"/>
+  <text x="815" y="751" text-anchor="middle" class="head">Gemini Embeddings</text>
+  <text x="815" y="779" text-anchor="middle" class="body">gemini-embedding-001</text>
+  <text x="815" y="804" text-anchor="middle" class="small">Document vectors at build time</text>
+  <text x="815" y="827" text-anchor="middle" class="small">Question vector on every active turn</text>
+  <rect x="773" y="837" width="84" height="17" rx="8" fill="#f6dfb7"/>
+  <text x="815" y="849" text-anchor="middle" class="badge" fill="#67420b">CLOUD</text>
+
+  <rect x="1000" y="725" width="330" height="136" rx="13" class="local"/>
+  <text x="1165" y="751" text-anchor="middle" class="head">Local FAISS vector index</text>
+  <text x="1165" y="778" text-anchor="middle" class="body">Similarity search → top 3 chunks</text>
+  <text x="1165" y="803" text-anchor="middle" class="small">~/.g1_conversation/faiss_index</text>
+  <text x="1165" y="826" text-anchor="middle" class="small">Index + manifest cached on disk</text>
+  <text x="1165" y="848" text-anchor="middle" class="small">Path / mtime / size fingerprint</text>
+
+  <rect x="1375" y="725" width="470" height="136" rx="13" class="session"/>
+  <text x="1610" y="751" text-anchor="middle" class="head">Grounded prompt assembled at runtime</text>
+  <text x="1610" y="778" text-anchor="middle" class="body">top-3 facts + language instruction + passenger name</text>
+  <text x="1610" y="803" text-anchor="middle" class="small">four recent Q/A pairs + current question</text>
+  <text x="1610" y="826" text-anchor="middle" class="small">No planning loop and no “should I retrieve?” LLM call</text>
+  <text x="1610" y="848" text-anchor="middle" class="small">One bounded prompt feeds the Gemini stream</text>
+
+  <path d="M345 793 H380" class="raglink"/>
+  <path d="M630 793 H665" class="raglink"/>
+  <path d="M955 793 H990" class="raglink"/>
+  <path d="M1330 793 H1365" class="raglink"/>
+  <path d="M1610 725 V674 H1187 V553" class="raglink"/>
+  <rect x="1281" y="660" width="230" height="23" rx="11" fill="#eee8f7"/>
+  <text x="1396" y="676" text-anchor="middle" class="tiny">grounded context to Direct RAG</text>
+
+  <!-- D. ROS, motion, observability and boundaries -->
+  <text x="42" y="921" class="section">D. ROS 2 integration, motion control, observability, and data boundary</text>
+  <rect x="35" y="936" width="1850" height="116" rx="16" class="panel"/>
+
+  <rect x="50" y="950" width="415" height="88" rx="12" class="local"/>
+  <text x="257" y="974" text-anchor="middle" class="head">conversation_node.py orchestrator</text>
+  <text x="257" y="997" text-anchor="middle" class="small">Publishes speech text · response · state · gesture</text>
+  <text x="257" y="1018" text-anchor="middle" class="small">Background voice loop keeps ROS publishing responsive</text>
+
+  <rect x="490" y="950" width="465" height="88" rx="12" class="motion"/>
+  <text x="722" y="974" text-anchor="middle" class="head">Simulation and physical G1 motion paths</text>
+  <text x="722" y="996" text-anchor="middle" class="small">g1/gesture_command → g1_core → g1/joint_cmd (MuJoCo)</text>
+  <text x="722" y="1017" text-anchor="middle" class="small">/api/sport/request → Sport API 7106 (physical G1)</text>
+
+  <rect x="980" y="950" width="405" height="88" rx="12" class="startup"/>
+  <text x="1182" y="974" text-anchor="middle" class="head">Stable wave + visible timing</text>
+  <text x="1182" y="996" text-anchor="middle" class="small">50 Hz ONNX balance + 2.0 / 2.5 / 2.0 s arm blend</text>
+  <text x="1182" y="1017" text-anchor="middle" class="small">[PIPELINE] + STT / TTS metrics expose each delay</text>
+
+  <rect x="1410" y="950" width="455" height="88" rx="12" class="session"/>
+  <text x="1637" y="974" text-anchor="middle" class="head">Data boundary and cleanup</text>
+  <text x="1637" y="996" text-anchor="middle" class="small">Audio stays local; text/context → Gemini; reply → Edge TTS</text>
+  <text x="1637" y="1017" text-anchor="middle" class="small">Session PII is cleared; logs and reusable caches are separate</text>
+
+  <text x="960" y="1071" text-anchor="middle" class="small">End-to-end: greet + wave → remember name → choose language → listen naturally → transcribe locally → retrieve top 3 facts → generate once → stream speech → repeat</text>
+</svg>

@@ -1,0 +1,58 @@
+# ROS 2 / colcon generated output
+/build/
+/install/
+/log/
+
+# Optional upstream SDK checkouts are currently COLCON_IGNORE'd and are not
+# required by the simulated mapping/navigation stack. Add them as submodules
+# later if physical-robot integration needs them.
+/src/unitree_ros/
+/src/unitree_ros2/
+
+# Python caches and test output
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+**/.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Runtime recordings and generated maps
+*.bag
+*.bag.active
+*.db3
+*.db3-shm
+*.db3-wal
+*.mcap
+rosbag2_*/
+/src/g1_navigation/maps/*.pgm
+/src/g1_navigation/maps/*.png
+/src/g1_navigation/maps/*.yaml
+!/src/g1_navigation/maps/.gitkeep
+
+# Local configuration, credentials and editor files
+.env
+.env.*
+!.env.example
+*.local
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Logs, crash dumps and native build leftovers
+*.log
+core
+core.*
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Local simulation/debug scratch files
+/MUJOCO_LOG.TXT
+/screenshot*.png
+/terminal_cmnds.txt

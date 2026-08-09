@@ -1,0 +1,10 @@
+# Editor configuration
+.vscode/
+
+# Duplicate external repository
+/unitree_rl_mjlab/
+
+# Temporary local files
+/commands.txt
+/test_rl.py
+/test_rot.py
