@@ -63,11 +63,12 @@ class ConversationNode(Node):
         self.declare_parameter("unitree_loco_request_topic", "/api/sport/request")
         self.declare_parameter("pipeline_heartbeat_sec", 5.0)
         self.declare_parameter("listen_window_sec", 4.0)
-        self.declare_parameter("post_tts_echo_guard_sec", 0.5)
+        self.declare_parameter("post_tts_echo_guard_sec", 0.2)
         self.declare_parameter("vad_backend", "silero")
         self.declare_parameter("vad_threshold", 0.5)
         self.declare_parameter("vad_end_threshold", 0.35)
-        self.declare_parameter("vad_silence_ms", 900.0)
+        self.declare_parameter("vad_silence_ms", 600.0)
+        self.declare_parameter("tts_backend", "auto")
 
         whisper_model = self.get_parameter("whisper_model").get_parameter_value().string_value
         stt_backend = self.get_parameter("stt_backend").value
@@ -100,6 +101,7 @@ class ConversationNode(Node):
             self.get_parameter("vad_end_threshold").value
         )
         vad_silence_ms = float(self.get_parameter("vad_silence_ms").value)
+        tts_backend = str(self.get_parameter("tts_backend").value)
 
         # ── ROS2 Publishers ──────────────────────────────────────────
         self.speech_text_pub = self.create_publisher(String, "g1/speech_text", 10)
@@ -118,7 +120,7 @@ class ConversationNode(Node):
         # Startup timing uses this flag from heartbeat threads, so it must
         # exist before either neural model is initialized.
         self._running = True
-        self.tts = TTSEngine()
+        self.tts = TTSEngine(backend=tts_backend)
         self.stt = STTEngine(
             model_name=whisper_model,
             backend=stt_backend,

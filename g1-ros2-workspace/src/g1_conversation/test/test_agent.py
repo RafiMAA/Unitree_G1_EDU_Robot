@@ -325,6 +325,7 @@ def test_tts_uses_friendly_local_voice_profiles():
     from g1_conversation.tts_engine import TTSEngine
 
     engine = object.__new__(TTSEngine)
+    engine._preferred_backend = "edge"
     assert engine.get_profile("en").voice == "en-US-AvaMultilingualNeural"
     assert engine.get_profile("en").rate == "+8%"
     assert engine.get_profile("si").voice == "si-LK-ThiliniNeural"
@@ -336,6 +337,7 @@ def test_tts_cache_key_changes_with_prosody(tmp_path):
     from g1_conversation.tts_engine import TTSEngine, VoiceProfile
 
     engine = object.__new__(TTSEngine)
+    engine._preferred_backend = "edge"
     engine._cache_dir = str(tmp_path)
     normal = VoiceProfile("voice", "+0%")
     faster = VoiceProfile("voice", "+8%")
@@ -350,6 +352,7 @@ def test_tts_sequence_prefetches_next_sentence_during_playback():
     from g1_conversation.tts_engine import TTSEngine, _PreparedAudio
 
     engine = object.__new__(TTSEngine)
+    engine._preferred_backend = "edge"
     engine._stop_requested = threading.Event()
     engine._speak_lock = threading.Lock()
     second_ready = threading.Event()

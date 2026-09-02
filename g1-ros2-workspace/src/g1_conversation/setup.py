@@ -43,6 +43,7 @@ setup(
     license='MIT',
     extras_require={
         'test': ['pytest'],
+        'local-tts': ['piper-tts'],
     },
     entry_points={
         'console_scripts': [

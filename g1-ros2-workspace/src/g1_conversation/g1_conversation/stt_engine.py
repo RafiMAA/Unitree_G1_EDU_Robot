@@ -35,7 +35,7 @@ class TranscriptionResult:
 
 
 # Whisper model sizes: tiny, base, small, medium, large
-DEFAULT_MODEL = "small"
+DEFAULT_MODEL = "base"
 LOCAL_FASTER_WHISPER_ROOT = os.path.join(
     os.path.expanduser("~"), ".cache", "g1_conversation"
 )
