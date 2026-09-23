@@ -1,134 +1,124 @@
-\documentclass[10pt,twocolumn]{article}
-
-% ---------- Packages ----------
-\usepackage[letterpaper,margin=0.75in,columnsep=0.25in]{geometry}
-\usepackage{times}
-\usepackage[T1]{fontenc}
-\usepackage{amsmath,amssymb}
-\usepackage{graphicx}
-\usepackage{authblk}
-\usepackage{enumitem}
-\usepackage{titlesec}
-\usepackage{abstract}
-\usepackage{hyperref}
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
 \usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
 \usepackage{fancyhdr}
 
-% ---------- IEEE-like section formatting ----------
-\titleformat{\section}
-  {\normalfont\centering\small\bfseries}
-  {\Roman{section}.}{0.6em}{\MakeUppercase}
-\titleformat{\subsection}
-  {\normalfont\itshape\small}
-  {\Alph{subsection}.}{0.6em}{}
-\titlespacing*{\section}{0pt}{9pt}{5pt}
-\titlespacing*{\subsection}{0pt}{7pt}{3pt}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\fancyfoot[L]{\textit{ERU Symposium 2026 - DOI (to be filled by organisers)}}
+\renewcommand{\footrulewidth}{0pt}
 
-\renewcommand{\abstractnamefont}{\normalfont\bfseries\itshape}
-\renewcommand{\abstracttextfont}{\normalfont\itshape}
-\setlength{\absleftindent}{0pt}
-\setlength{\absrightindent}{0pt}
-
-\pagestyle{plain}
-
-\setlength{\parindent}{1em}
-
-\title{\LARGE \textbf{An Integrated ROS~2 Stack for Humanoid Locomotion, Autonomous Navigation, and Conversational Interaction on the Unitree G1 EDU}}
-
-\author[1]{\normalsize M.\ A.\ Abdul Rafi}
-\affil[1]{\normalsize Department of Computer Science \& Engineering}
-\affil[ ]{\normalsize University of Moratuwa, Sri Lanka}
-\affil[ ]{\normalsize Email: abdulr.23@cse.mrt.ac.lk}
-
-\date{}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
 
 \begin{document}
-\twocolumn[
-\begin{@twocolumnfalse}
+
+\title{Intelligent Humanoid Airport Concierge: A RAG-Based Voice Interface and Autonomous Navigation System for the Unitree G1}
+
+\author{
+\IEEEauthorblockN{M.A.A. Rafi}
+\IEEEauthorblockA{
+\textit{Department of Computer Science and Engineering} \\
+\textit{University of Moratuwa} \\
+Katubedda, Sri Lanka \\
+Email: abdulr.23@cse.mrt.ac.lk}
+\and
+\IEEEauthorblockN{Sulochana Sooriyaarachchi}
+\IEEEauthorblockA{
+\textit{Department of Computer Science \& Engineering} \\
+\textit{University of Moratuwa} \\
+Katubedda, Sri Lanka \\
+Email: sulochanas@cse.mrt.ac.lk}
+}
+
 \maketitle
-\begin{abstract}
-\noindent
-Deploying a humanoid robot as a passenger-facing service agent requires the integration of three normally separate research areas: learned bipedal locomotion, LiDAR-based indoor mapping and navigation, and natural, voice-driven human-robot interaction. This paper presents the design and implementation of a ROS~2 Jazzy software stack for the Unitree G1 EDU humanoid, developed as a university capstone project in collaboration with a ride-hailing platform to prototype an airport mobility concierge. The system comprises three layers: an ONNX-based reinforcement-learning locomotion policy driving a state-machine teleoperation and control node validated in MuJoCo simulation; a mapping and navigation layer combining live voxelized 3D LiDAR mapping with SLAM~Toolbox and Nav2 for point-cloud filtering, localization, and path planning; and a Retrieval-Augmented Generation (RAG) conversational agent that transcribes speech with Whisper, retrieves grounded answers from a FAISS-indexed knowledge base using a LangChain agent, and replies through synthesized speech, enabling multilingual, privacy-preserving passenger interaction. A React-based web gateway exposes teleoperation, mapping, and navigation-goal controls to a browser client over the robot's onboard network. Simulated evaluation shows that the locomotion policy produces stable walking gaits under keyboard teleoperation, the mapping and navigation layer builds consistent voxel maps and executes Nav2 goal-directed traversal, and the conversational agent reliably answers in-domain queries across multiple languages while discarding passenger-identifying data at the end of each session. The results demonstrate that a single ROS~2 architecture can coherently span learned control, autonomous navigation, and language-grounded interaction for a real-world humanoid service application.
-\end{abstract}
-\vspace{4pt}
-\textit{\textbf{Index Terms}---Humanoid Robotics, ROS~2, Reinforcement Learning, SLAM, Nav2, Retrieval-Augmented Generation, Human-Robot Interaction}
-\vspace{10pt}
-\end{@twocolumnfalse}
-]
+
+\begin{IEEEkeywords}
+humanoid robotics, retrieval-augmented generation, autonomous navigation, LiDAR SLAM, multilingual speech interface
+\end{IEEEkeywords}
 
 \section{Introduction}
-Humanoid robots are increasingly proposed as general-purpose service agents capable of operating in human-centric spaces such as airports, retail environments, and transit hubs, where a bipedal form factor allows navigation through infrastructure designed for people. Realizing such a role requires far more than a single capability: the robot must walk reliably under dynamic control, build and use a map of an unfamiliar indoor environment to reach a destination, and communicate naturally with the people it serves, all coordinated through a common software architecture.
-
-Most published humanoid research addresses these problems in isolation, learned locomotion policies are typically demonstrated on treadmills or in controlled gait-tracking benchmarks, SLAM and navigation stacks are most often validated on wheeled platforms, and conversational agents are studied largely as text or voice interfaces detached from an embodied robot. This paper instead describes a single, integrated ROS~2 system built for the Unitree G1 EDU humanoid that couples these three layers into one operational stack, applied to a concrete use case, a passenger-facing mobility concierge developed with a ride-hailing partner.
-
-The main contributions of this paper are: (1) a layered ROS~2 architecture that connects an ONNX reinforcement-learning locomotion policy, a SLAM~Toolbox/Nav2 mapping and navigation pipeline, and a Whisper/RAG conversational agent under a common communication backbone spanning MQTT, DDS, and WebRTC; (2) a browser-based control gateway that exposes teleoperation, live mapping, and navigation goals to a remote operator without native ROS~2 tooling; and (3) a privacy-conscious, multilingual voice concierge pipeline that grounds its responses in an approved knowledge base and discards passenger data at the end of each session.
+Airport terminals need both natural-language guidance and physical wayfinding, a combination existing systems only partly cover: chatbots answer questions but cannot escort a passenger, while navigation robots move reliably but understand little natural language. This work integrates both on a Unitree G1 EDU humanoid. A retrieval-augmented voice interface answers passenger queries from an approved knowledge base, and a LiDAR-based navigation stack then guides the passenger to the identified destination. The system targets English, Sinhala and Tamil and is validated in MuJoCo/ROS 2 simulation.
 
 \section{Literature Review}
-ROS~2 was designed to meet the real-time, multi-robot, and safety-critical requirements that limited the original ROS in production robotic deployments, and provides the middleware backbone, DDS-based communication, and lifecycle management used throughout this system \cite{macenski2022ros2}. For learned locomotion, Rudin \emph{et al.} showed that massively parallel GPU-based reinforcement learning can train stable legged-locomotion policies for a quadrupedal robot in minutes rather than days, using a curriculum-driven training regime later adapted across many legged and humanoid platforms \cite{rudin2022walk}; the present system deploys a policy of this general class, trained and simulated with MuJoCo, a physics engine purpose-built for model-based control and contact-rich articulated-body simulation that has become a standard tool for both classical control and reinforcement-learning research \cite{todorov2012mujoco}.
+Retrieval-augmented generation (RAG) grounds language-model outputs in an external document store, reducing hallucination and allowing knowledge updates without retraining \cite{lewis2020rag}. The ROS 2 Nav2 stack offers a modular, behaviour-tree-driven planner and controller demonstrated on service robots operating alongside pedestrians \cite{macenski2020marathon2}. Multilingual transcription remains a bottleneck for lower-resource languages such as Sinhala and Tamil; Whisper generalises well but can trail cloud recognisers on noisy, accented speech \cite{radford2022whisper}, and faster-whisper \cite{systran_fasterwhisper} reimplements it to cut inference time and memory. Few prior systems combine RAG conversation, multilingual speech and full-body humanoid navigation in one airport-concierge pipeline.
 
-For mapping and navigation, SLAM~Toolbox provides pose-graph-based 2D/3D simultaneous localization and mapping with support for continued mapping and optimization-based localization, and is the currently recommended SLAM package for ROS~2 \cite{macenski2021slam}, while Navigation2 (Nav2) reimplements the classical ROS Navigation stack using behaviour trees and lifecycle-managed nodes suited to the real-time requirements of ROS~2, and has been validated in long-duration deployments alongside pedestrians \cite{macenski2020nav2}.
+\section{Materials and Methods}
 
-For the conversational layer, Radford \emph{et al.} introduced Whisper, a speech-recognition model trained on 680{,}000 hours of weakly supervised multilingual and multitask audio that generalizes to new domains without task-specific fine-tuning, which this system uses for on-device speech transcription \cite{radford2023whisper}. To ground the conversational agent's responses in an approved knowledge base rather than relying purely on a language model's parametric memory, this work adopts the Retrieval-Augmented Generation (RAG) paradigm of Lewis \emph{et al.}, which couples a pre-trained generator with a non-parametric retriever over an external document index to improve factuality and provenance \cite{lewis2020rag}. The retrieval index itself is built with FAISS, a library for efficient similarity search over large, high-dimensional vector collections that underlies the dense retrieval step in many modern RAG systems \cite{johnson2019faiss}.
+\subsection{Problem Formulation and Objectives}
+The target scenario is a passenger asking, for example, ``Where is the taxi pickup point?'' The robot must transcribe the request, retrieve approved information, give a grounded spoken answer, identify the destination on its map, and guide the passenger there autonomously. The objectives are to: (1) build a voice interface for the G1; (2) ground answers in approved documents; (3) support English, Sinhala and Tamil; (4) map, localize and navigate to a selected destination, validated in simulation first; and (5) evaluate accuracy, latency, navigation success and computational cost.
 
-\section{System Architecture and Methods}
+\subsection{System Architecture}
+Fig.~\ref{fig:architecture} shows the two pipelines. In the conversation pipeline, WebRTC voice-activity detection (VAD) segments speech, which is transcribed and passed to a LangChain agent. The agent retrieves context from a FAISS index of approved documents (Gemini embeddings) and a Gemini model generates a grounded spoken answer. If the request names a destination, the agent forwards it as a Nav2 goal, planned on a LiDAR-built map, localized through the frame chain odom $\rightarrow$ pelvis $\rightarrow$ mid360\_link, and executed as velocity commands on the simulated G1.
 
-\subsection{Hardware and Communication Architecture}
-The Unitree G1 EDU exposes two onboard computers alongside a cloud service and a manufacturer mobile application, communicating over a combination of MQTT, HTTP, WebRTC, BLE, and DDS. The ROS~2 Jazzy workspace developed in this work runs across these onboard computers and interfaces with the robot's native control layer, external developer tooling, and a browser-based operator interface, all coordinated through this heterogeneous transport stack rather than a single uniform bus.
+\begin{figure}[htbp]
+\centering
+% \includegraphics[width=\columnwidth]{system_architecture.png}
+\caption{System architecture: the conversation pipeline (top) passes a spoken destination to the ROS 2 localization and navigation pipeline (bottom).}
+\label{fig:architecture}
+\end{figure}
 
-\subsection{Locomotion Layer}
-Bipedal walking is driven by an ONNX-exported reinforcement-learning policy of the class described by Rudin \emph{et al.} \cite{rudin2022walk}, wrapped in a ROS~2 state-machine node that consumes velocity commands on \texttt{/cmd\_vel} and outputs joint-level actuation targets. A keyboard teleoperation node maps forward/backward, turning, strafing, speed adjustment, and stop commands to this velocity interface for manual control and testing. Prior to any hardware deployment, the full locomotion and control loop is validated against a MuJoCo-based simulator \cite{todorov2012mujoco}, bridged into ROS~2 so that the simulated G1 exposes the same topic interface as the physical robot, allowing locomotion, mapping, and navigation code to be developed and tested without hardware risk.
+\subsection{Conversational RAG Pipeline}
+Table~\ref{tab:methods} lists the components chosen for the conversation pipeline; speech recognition uses Whisper, with faster-whisper \cite{systran_fasterwhisper} as a lighter local backend. RAG was preferred over fine-tuning because the knowledge base can be updated by re-indexing documents without retraining, which matters where airport signage, routes and services change.
 
-\subsection{Mapping and Navigation Layer}
-A dedicated mapping node builds a live voxelized 3D representation of the environment from LiDAR point clouds, visualized in RViz for operator inspection. This map feeds a navigation layer that integrates SLAM~Toolbox for pose-graph localization and mapping \cite{macenski2021slam} with Nav2 for costmap-based path planning and execution \cite{macenski2020nav2}, together with point-cloud filtering and a command-arbitration node that reconciles autonomous navigation commands with manual overrides on a shared \texttt{/cmd\_vel\_safe} topic. A browser-based control gateway, built with React and connected through the robot's onboard network, allows an operator to drive the robot, monitor the live map, and issue navigation goals without installing native ROS~2 client software.
+\begin{table}[htbp]
+\caption{Method Selection and Justification}
+\label{tab:methods}
+\centering
+\begin{tabular}{|p{1.6cm}|p{2.1cm}|p{3.0cm}|}
+\hline
+\textbf{Component} & \textbf{Method} & \textbf{Justification} \\
+\hline
+Speech detection & WebRTC VAD & Lightweight; avoids processing silence \\
+\hline
+Speech recognition & Whisper / faster-whisper; cloud STT & Multilingual (EN/SI/TA) with a local backup \\
+\hline
+Retrieval and grounding & Gemini embeddings + FAISS; RAG with Gemini & Efficient search; restricts answers to approved sources \\
+\hline
+Orchestration & LangChain & Connects conversation, retrieval and navigation \\
+\hline
+Mapping / navigation & LiDAR SLAM + Nav2 & Mature, modular indoor navigation framework \\
+\hline
+\end{tabular}
+\end{table}
 
-\subsection{Conversational Concierge Pipeline}
-The flagship application layer turns the G1 into a passenger-facing concierge that explains a partner ride-hailing service and assists with its mobile-app installation. Speech is detected using WebRTC-based voice activity detection and transcribed locally with Whisper \cite{radford2023whisper}. The transcribed query is passed to a LangChain-orchestrated agent that retrieves relevant passages from a FAISS-indexed knowledge base \cite{johnson2019faiss} covering the partner service, its installation steps, and local location data, embedded through a large language model, following the retrieval-augmented generation pattern of Lewis \emph{et al.} \cite{lewis2020rag} to keep responses grounded in approved sources. Generated responses are synthesized to speech and played through the robot's onboard speaker. The pipeline supports onboarding and mid-conversation language switching across eleven languages, and intermediate pipeline state, transcriptions, agent responses, and session events, is published as ROS~2 topics for monitoring. Passenger name and session data are cleared immediately at session end, so no personally identifying information persists between interactions.
+\subsection{Localization and Navigation}
+Indoor maps are built in MuJoCo/ROS 2 simulation from a simulated Livox MID-360 LiDAR, an Intel RealSense D435 depth camera, an IMU and ground-truth odometry (Fig.~\ref{fig:g1sim}). Given a 2D map and an initial pose, Nav2 plans a global path, converts it into local velocity commands and continuously updates the pose and obstacle estimate. To keep the humanoid stable, velocity limits are set conservatively at about 0.2 m/s linear and 0.3 rad/s angular.
+
+\begin{figure}[htbp]
+\centering
+% \includegraphics[width=\columnwidth]{g1_simulation.png}
+\caption{(a) Unitree G1 EDU humanoid \cite{unitree_g1}; (b) Nav2 costmap and LiDAR scan in RViz; (c) the G1 walking in the MuJoCo simulation.}
+\label{fig:g1sim}
+\end{figure}
 
 \section{Results and Discussion}
+The G1 MuJoCo simulation, simulated LiDAR and depth sensing, ROS 2 odometry/TF, voxel mapping, RViz visualization and text-to-speech output are complete. Autonomous navigation to a selected goal and English RAG conversation have been demonstrated end-to-end, with grounded English answers and reliable mapping and goal navigation in simulation. Sinhala and Tamil recognition is still being tuned: local Whisper models are less reliable for these languages, and a cloud recogniser improves them. Running perception and simulation together slows navigation, and 3D obstacle avoidance with the depth camera is not yet implemented, so the 3D LiDAR may miss certain types of obstacles.
 
-\subsection{Performance Analysis}
-The system was evaluated primarily in the MuJoCo-based simulation environment, with each layer assessed independently before end-to-end integration.
-\begin{itemize}[leftmargin=1.1em,itemsep=1pt,topsep=2pt]
-\item \textbf{Locomotion}: the ONNX policy, driven through the keyboard teleoperation interface, produced stable forward, backward, turning, and strafing gaits in simulation across the tested command range.
-\item \textbf{Mapping and navigation}: the mapping node produced consistent, incrementally refined voxel maps of the simulated environment, and the SLAM~Toolbox/Nav2 pipeline successfully localized the robot and executed goal-directed traversal to operator-specified navigation targets.
-\item \textbf{Conversational agent}: the Whisper/RAG pipeline correctly transcribed and answered in-domain spoken queries about the partner service across the supported languages, and consistently discarded session-specific passenger data once a conversation concluded.
-\end{itemize}
+Fig.~\ref{fig:benchmark} quantifies the speech backend from the published faster-whisper benchmark \cite{systran_fasterwhisper}, as relative reduction $\eta = (X_b - X_o)/X_b \times 100\%$ and speedup $S = T_b/T_o$ ($b$: baseline, $o$: optimized). On CPU (small model), faster-whisper INT8 cuts 13~min of transcription from 418~s to 102~s (75.6\% lower, $S = 4.10\times$) and RAM from 2335 to 1477~MB (36.7\% lower). On GPU (large-v2), time falls from 143~s to 59~s (58.7\% lower, $S = 2.42\times$) and VRAM from 4708 to 2926~MB (37.9\% lower). These are component-level values, not end-to-end G1 measurements; whole-system latency and power draw remain to be measured on the robot.
 
-\subsection{Challenges and Limitations}
-Several integration challenges arose from combining these three layers. The heterogeneous transport stack, spanning MQTT, DDS, WebRTC, and BLE across the cloud service, onboard computers, and manufacturer app, required careful arbitration to avoid command conflicts between autonomous navigation and manual teleoperation, addressed through the dedicated command-arbitration node publishing to \texttt{/cmd\_vel\_safe}. Because development and validation were carried out primarily in simulation using MuJoCo ground-truth odometry, deployment on physical hardware requires replacing this with real LiDAR-inertial odometry or SLAM, verifying the full \texttt{map}$\rightarrow$\texttt{odom}$\rightarrow$\texttt{base\_footprint}$\rightarrow$\texttt{pelvis}$\rightarrow$\texttt{mid360\_link} transform chain, and re-tuning footprint, obstacle-height bands, and stop distances, which are conservative starting points rather than calibrated safety limits. The current navigation stack also assumes flat indoor floors and does not yet handle drop-offs, stairs, or slopes, and the conversational agent's Phase~1 scope remains informational, ride booking through the concierge is not yet implemented.
+\begin{figure}[htbp]
+\centering
+% \includegraphics[width=\columnwidth]{whisper_benchmark.png}
+\caption{faster-whisper (INT8) vs. OpenAI Whisper, from the published benchmark \cite{systran_fasterwhisper}. Component-level, not end-to-end G1 results.}
+\label{fig:benchmark}
+\end{figure}
 
 \section{Conclusion and Future Work}
-This work presented an integrated ROS~2 Jazzy stack for the Unitree G1 EDU humanoid that couples an ONNX reinforcement-learning locomotion policy, a SLAM~Toolbox and Nav2 mapping and navigation pipeline, and a Whisper/RAG multilingual conversational concierge, connected through a heterogeneous communication architecture and exposed through a browser-based control gateway. Simulated evaluation shows that the three layers function both independently and together, producing stable locomotion, consistent mapping and goal-directed navigation, and grounded, privacy-conscious conversational responses, demonstrating the feasibility of a single coherent software architecture for humanoid service robotics.
+A single humanoid platform can combine grounded conversational AI with autonomous indoor navigation for an airport-concierge role, with English conversation and simulated goal navigation working end-to-end. Future work will link spoken destinations to Nav2 goals, replace ground-truth odometry with LiDAR-inertial localization, improve Sinhala and Tamil recognition, add depth-based 3D obstacle detection, and move to the physical G1 for tests with real users.
 
-Future work will focus on transferring the locomotion and navigation layers to physical hardware with real LiDAR-inertial odometry, extending the navigation stack to handle non-flat terrain such as stairs and slopes, expanding the conversational agent's scope from informational assistance to full ride-booking interaction, and conducting user studies to evaluate the concierge's effectiveness with real passengers in an airport setting.
-
-\bibliographystyle{IEEEtran}
-\begin{thebibliography}{8}
-
-\bibitem{macenski2022ros2}
-S.~Macenski, T.~Foote, B.~Gerkey, C.~Lalancette, and W.~Woodall, ``Robot Operating System 2: Design, architecture, and uses in the wild,'' \emph{Science Robotics}, vol.~7, no.~66, p.~eabm6074, 2022.
-
-\bibitem{rudin2022walk}
-N.~Rudin, D.~Hoeller, P.~Reist, and M.~Hutter, ``Learning to walk in minutes using massively parallel deep reinforcement learning,'' in \emph{Proc. 5th Conference on Robot Learning (CoRL)}, PMLR vol.~164, 2022, pp.~91--100.
-
-\bibitem{todorov2012mujoco}
-E.~Todorov, T.~Erez, and Y.~Tassa, ``MuJoCo: A physics engine for model-based control,'' in \emph{Proc. IEEE/RSJ Int. Conf. on Intelligent Robots and Systems (IROS)}, 2012, pp.~5026--5033.
-
-\bibitem{macenski2021slam}
-S.~Macenski and I.~Jambrecic, ``SLAM Toolbox: SLAM for the dynamic world,'' \emph{Journal of Open Source Software}, vol.~6, no.~61, p.~2783, 2021.
-
-\bibitem{macenski2020nav2}
-S.~Macenski, F.~Mart\'{i}n, R.~White, and J.~Gin\'{e}s Clavero, ``The Marathon 2: A navigation system,'' in \emph{Proc. IEEE/RSJ Int. Conf. on Intelligent Robots and Systems (IROS)}, 2020.
-
-\bibitem{radford2023whisper}
-A.~Radford, J.~W.~Kim, T.~Xu, G.~Brockman, C.~McLeavey, and I.~Sutskever, ``Robust speech recognition via large-scale weak supervision,'' in \emph{Proc. 40th Int. Conf. on Machine Learning (ICML)}, PMLR vol.~202, 2023, pp.~28492--28518.
-
-\bibitem{lewis2020rag}
-P.~Lewis, E.~Perez, A.~Piktus, F.~Petroni, V.~Karpukhin, N.~Goyal, H.~K\"{u}ttler, M.~Lewis, W.~Yih, T.~Rockt\"{a}schel, S.~Riedel, and D.~Kiela, ``Retrieval-augmented generation for knowledge-intensive NLP tasks,'' in \emph{Advances in Neural Information Processing Systems (NeurIPS)}, vol.~33, 2020, pp.~9459--9474.
-
-\bibitem{johnson2019faiss}
-J.~Johnson, M.~Douze, and H.~J\'{e}gou, ``Billion-scale similarity search with GPUs,'' \emph{IEEE Transactions on Big Data}, vol.~7, no.~3, pp.~535--547, 2019.
-
+\begin{thebibliography}{00}
+\bibitem{lewis2020rag} P. Lewis et al., ``Retrieval-augmented generation for knowledge-intensive NLP tasks,'' in \textit{Adv. Neural Inf. Process. Syst. (NeurIPS)}, vol. 33, 2020, pp. 9459--9474.
+\bibitem{macenski2020marathon2} S. Macenski, F. Mart\'in, R. White, and J. Gin\'es Clavero, ``The Marathon 2: A navigation system,'' in \textit{Proc. IEEE/RSJ Int. Conf. Intelligent Robots and Systems (IROS)}, 2020.
+\bibitem{radford2022whisper} A. Radford, J. W. Kim, T. Xu, G. Brockman, C. McLeavey, and I. Sutskever, ``Robust speech recognition via large-scale weak supervision,'' arXiv:2212.04356, 2022.
+\bibitem{unitree_g1} Unitree Robotics, ``Unitree G1 humanoid robot,'' 2024. [Online]. Available: unitree.com/g1
+\bibitem{systran_fasterwhisper} SYSTRAN, ``faster-whisper: Faster Whisper transcription with CTranslate2,'' GitHub. [Online]. Available: github.com/SYSTRAN/faster-whisper
 \end{thebibliography}
 
 \end{document}
