@@ -8,6 +8,23 @@ Software stack for the Unitree G1 EDU humanoid, built as a university capstone p
 
 See [`Robot_Architecture.md`](Robot_Architecture.md) for a full breakdown of how the cloud service, the robot's onboard computers (PC1/PC2), the Unitree Explore app, and external developer tooling communicate over MQTT, HTTP, WebRTC, BLE, and DDS.
 
+## Run the complete navigation console
+
+After the ROS workspace has been built, one command starts the simulator,
+perception, SLAM/Nav2, label JSON storage, velocity safety controls and React UI:
+
+```bash
+source ~/.nvm/nvm.sh
+nvm use 22
+cd g1-navigation-ui
+npm run dev
+```
+
+Stop earlier simulation/mapping/UI launches first. Open `http://localhost:5173`.
+The UI can import saved YAML/image map pairs, switch from SLAM to AMCL, and set
+an RViz-style initial pose by dragging an arrow. See the
+[console guide](g1-navigation-ui/README.md) for map loading, labels and setup.
+
 ## What's in here
 
 | Area | Package | Description |

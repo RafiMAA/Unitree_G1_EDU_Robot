@@ -30,7 +30,9 @@ setup(
             'cloud_to_scan = g1_navigation.cloud_to_scan:main',
             'cloud_filter = g1_navigation.cloud_filter:main',
             'command_mux = g1_navigation.command_mux:main',
+            'retreat_guard = g1_navigation.retreat_guard:main',
             'web_gateway = g1_navigation.web_gateway:main',
+            'map_labels = g1_navigation.map_labels:main',
         ],
     },
 )

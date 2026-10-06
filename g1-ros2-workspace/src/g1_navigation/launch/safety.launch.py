@@ -39,6 +39,13 @@ def generate_launch_description():
                 parameters=[params_file, {'use_sim_time': use_sim_time}],
             ),
             Node(
+                package='g1_navigation',
+                executable='retreat_guard',
+                name='g1_retreat_guard',
+                output='screen',
+                parameters=[{'use_sim_time': use_sim_time}],
+            ),
+            Node(
                 package='nav2_lifecycle_manager',
                 executable='lifecycle_manager',
                 name='lifecycle_manager_safety',

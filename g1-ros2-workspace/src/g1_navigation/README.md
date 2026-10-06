@@ -87,3 +87,13 @@ This stack is for approximately flat indoor floors. It does not provide
 drop-off, hole, downward-stair, slope, swing-foot or footstep planning. A 3D
 voxel costmap still produces a 2D navigation decision. Use a safety operator,
 physical emergency stop and separate terrain perception on hardware.
+
+## Manual retreat after an obstacle stop (Humble console)
+
+`safety.launch.py` runs the final `retreat_guard` node. Collision Monitor writes
+`/cmd_vel_collision`; the guard owns `/cmd_vel_safe`. In mapping mode it permits
+translation at up to a commanded 0.10 m/s only when fresh filtered LiDAR points
+show non-decreasing physical clearance at close obstacles and an improving
+exit direction. Turns and unsafe/stale
+requests remain stopped. Idle, emergency stop and navigation mode cannot use
+the recovery exception. See the UI README's recovery controls.

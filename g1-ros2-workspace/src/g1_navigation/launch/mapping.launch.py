@@ -18,6 +18,8 @@ def generate_launch_description():
     nav_params = os.path.join(nav_share, 'config', 'nav2_params.yaml')
 
     start_nav = LaunchConfiguration('start_nav')
+    start_web = LaunchConfiguration('start_web')
+    cmd_vel_topic = LaunchConfiguration('cmd_vel_topic')
 
     nav_lifecycle_nodes = [
         'controller_server',
@@ -33,6 +35,8 @@ def generate_launch_description():
             DeclareLaunchArgument('start_sim', default_value='true'),
             DeclareLaunchArgument('start_slam', default_value='true'),
             DeclareLaunchArgument('start_nav', default_value='true'),
+            DeclareLaunchArgument('start_web', default_value='true'),
+            DeclareLaunchArgument('cmd_vel_topic', default_value='/cmd_vel_teleop'),
             DeclareLaunchArgument('use_sim_time', default_value='false'),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
@@ -52,11 +56,13 @@ def generate_launch_description():
                     os.path.join(nav_share, 'launch', 'perception_web.launch.py')
                 ),
                 launch_arguments={'start_rosbridge': 'false'}.items(),
+                condition=IfCondition(start_web),
             ),
             Node(
                 package='rosbridge_server',
                 executable='rosbridge_websocket',
                 name='rosbridge_websocket',
+                condition=IfCondition(start_web),
                 output='screen',
                 parameters=[{'port': 9090}],
             ),
@@ -68,19 +74,6 @@ def generate_launch_description():
                 condition=IfCondition(start_slam),
                 parameters=[slam_params, {'use_sim_time': use_sim_time}],
             ),
-            Node(
-                package='nav2_lifecycle_manager',
-                executable='lifecycle_manager',
-                name='lifecycle_manager_slam',
-                output='screen',
-                condition=IfCondition(start_slam),
-                parameters=[
-                    {'use_sim_time': use_sim_time},
-                    {'autostart': True},
-                    {'bond_timeout': 0.0},
-                    {'node_names': ['slam_toolbox']},
-                ],
-            ),
             # --- Navigation Stack (SLAM-Based) ---
             Node(
                 package='nav2_controller',
@@ -89,7 +82,7 @@ def generate_launch_description():
                 output='screen',
                 condition=IfCondition(start_nav),
                 parameters=[nav_params, common],
-                remappings=[('cmd_vel', '/cmd_vel_teleop')],
+                remappings=[('cmd_vel', cmd_vel_topic)],
             ),
             Node(
                 package='nav2_smoother',
@@ -114,7 +107,7 @@ def generate_launch_description():
                 output='screen',
                 condition=IfCondition(start_nav),
                 parameters=[nav_params, common],
-                remappings=[('cmd_vel', '/cmd_vel_teleop')],
+                remappings=[('cmd_vel', cmd_vel_topic)],
             ),
             Node(
                 package='nav2_bt_navigator',

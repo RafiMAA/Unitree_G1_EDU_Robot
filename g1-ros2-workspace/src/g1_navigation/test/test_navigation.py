@@ -47,8 +47,8 @@ def test_navigation_yaml_has_live_cloud_and_safe_output():
     config = yaml.safe_load(path.read_text())
     local = config['local_costmap']['local_costmap']['ros__parameters']
     collision = config['collision_monitor']['ros__parameters']
-    assert local['voxel_layer']['mid360']['data_type'] == 'PointCloud2'
-    assert local['voxel_layer']['mid360']['topic'].endswith('points_filtered')
-    assert local['voxel_layer']['mid360']['clearing'] is True
-    assert collision['cmd_vel_out_topic'] == '/cmd_vel_safe'
+    assert local['obstacle_layer']['mid360']['data_type'] == 'PointCloud2'
+    assert local['obstacle_layer']['mid360']['topic'].endswith('points_filtered')
+    assert local['obstacle_layer']['mid360']['clearing'] is True
+    assert collision['cmd_vel_out_topic'] == '/cmd_vel_collision'
     assert collision['mid360']['type'] == 'pointcloud'

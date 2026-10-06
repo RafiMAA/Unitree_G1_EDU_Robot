@@ -64,7 +64,8 @@ DEFAULT_CMD_VEL_TIMEOUT_SEC = 0.5
 # smoother is only partway through its initial ramp. The terminal controller
 # starts at 0.2 m/s; 0.15 keeps all three UI axes usable while avoiding the
 # marginal 0.10 m/s gait boundary.
-POLICY_ACTIVATION_THRESHOLD = 0.15
+# Accept the 0.10 m/s retreat command and the UI minimum speed.
+POLICY_ACTIVATION_THRESHOLD = 0.05
 
 # Slew-rate limits: max velocity change per second.  These act as a safety net
 # against impossible command jumps.  When the full navigation stack is running,

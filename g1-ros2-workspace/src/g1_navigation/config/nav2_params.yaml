@@ -33,7 +33,7 @@ planner_server:
     expected_planner_frequency: 2.0
     planner_plugins: [GridBased]
     GridBased:
-      plugin: nav2_navfn_planner::NavfnPlanner
+      plugin: nav2_navfn_planner/NavfnPlanner
       tolerance: 0.25
       use_astar: true
       allow_unknown: true
@@ -164,13 +164,13 @@ behavior_server:
     cycle_frequency: 10.0
     behavior_plugins: [spin, backup, drive_on_heading, wait]
     spin:
-      plugin: nav2_behaviors::Spin
+      plugin: nav2_behaviors/Spin
     backup:
-      plugin: nav2_behaviors::BackUp
+      plugin: nav2_behaviors/BackUp
     drive_on_heading:
-      plugin: nav2_behaviors::DriveOnHeading
+      plugin: nav2_behaviors/DriveOnHeading
     wait:
-      plugin: nav2_behaviors::Wait
+      plugin: nav2_behaviors/Wait
     local_frame: odom
     global_frame: map
     robot_base_frame: base_footprint
@@ -222,7 +222,7 @@ collision_monitor:
     base_frame_id: base_footprint
     odom_frame_id: odom
     cmd_vel_in_topic: /cmd_vel_smoothed
-    cmd_vel_out_topic: /cmd_vel_safe
+    cmd_vel_out_topic: /cmd_vel_collision
     state_topic: /collision_monitor_state
     transform_tolerance: 0.2
     # The synthetic 360-degree cloud renders four cameras and may arrive at
@@ -235,18 +235,19 @@ collision_monitor:
     polygons: [slowdown_zone, stop_zone]
     slowdown_zone:
       type: polygon
-      points: "[[0.85, 0.55], [0.85, -0.55], [-0.40, -0.55], [-0.40, 0.55]]"
+      points: [0.85, 0.55, 0.85, -0.55, -0.40, -0.55, -0.40, 0.55]
       action_type: slowdown
-      min_points: 4
+      max_points: 4
       slowdown_ratio: 0.30
       visualize: true
       polygon_pub_topic: /collision_slowdown_zone
       enabled: true
     stop_zone:
       type: polygon
-      points: "[[0.48, 0.38], [0.48, -0.38], [-0.32, -0.38], [-0.32, 0.38]]"
+      # Stop before low-rate scans and walking momentum consume clearance.
+      points: [0.65, 0.50, 0.65, -0.50, -0.55, -0.50, -0.55, 0.50]
       action_type: stop
-      min_points: 4
+      max_points: 4
       visualize: true
       polygon_pub_topic: /collision_stop_zone
       enabled: true

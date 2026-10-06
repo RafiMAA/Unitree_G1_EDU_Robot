@@ -1,4 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import MapView from "./MapView.jsx";
+import { freeMapCell } from "./mapGeometry.js";
+import LabelsPanel from "./LabelsPanel.jsx";
+import useMapLabels from "./useMapLabels.js";
+import useConsoleSession from "./useConsoleSession.js";
+import MapSessionPanel from "./MapSessionPanel.jsx";
+import { initialPoseMessage } from "./initialPose.js";
 
 const ROSBRIDGE_URL = import.meta.env.VITE_ROSBRIDGE_URL || "ws://localhost:9090";
 // Speed defaults match terminal teleop_keyboard.py (lin=0.2, ang=0.3).
@@ -19,6 +26,8 @@ const TOPICS = {
   goal: ["/ui/goal", "geometry_msgs/msg/PoseStamped"],
   cancel: ["/ui/cancel_navigation", "std_msgs/msg/Bool"],
   estop: ["/ui/emergency_stop", "std_msgs/msg/Bool"],
+  initialPose: ["/initialpose", "geometry_msgs/msg/PoseWithCovarianceStamped"],
+  labels: ["/ui/map_label_command", "std_msgs/msg/String"],
 };
 
 function nowStamp() {
@@ -29,21 +38,14 @@ function nowStamp() {
   };
 }
 
-function quaternionYaw(q = {}) {
-  return Math.atan2(
-    2 * ((q.w ?? 1) * (q.z ?? 0) + (q.x ?? 0) * (q.y ?? 0)),
-    1 - 2 * ((q.y ?? 0) ** 2 + (q.z ?? 0) ** 2),
-  );
-}
-
 export default function App() {
   const socketRef = useRef(null);
   const reconnectRef = useRef(null);
-  const canvasRef = useRef(null);
   const modeRef = useRef("mapping");
   const mapNameRef = useRef("g1_map");
   const [connected, setConnected] = useState(false);
   const [mode, setMode] = useState("mapping");
+  const [activeTab, setActiveTab] = useState("mapping");
   const [estop, setEstop] = useState(false);
   const [linearSpeed, setLinearSpeed] = useState(DEFAULT_LINEAR_SPEED);
   const [angularSpeed, setAngularSpeed] = useState(DEFAULT_ANGULAR_SPEED);
@@ -58,6 +60,18 @@ export default function App() {
   const [path, setPath] = useState([]);
   const [status, setStatus] = useState({ state: "offline", message: "Connecting to ROS…" });
   const [mapName, setMapName] = useState("g1_map");
+  const consoleSession = useConsoleSession();
+  const session = consoleSession.session;
+  const [posePicking, setPosePicking] = useState(false);
+  const [mapSwitching, setMapSwitching] = useState(false);
+  const switching = mapSwitching || Boolean(session?.transitioning);
+  const switchingRef = useRef(false);
+  switchingRef.current = switching;
+  const sessionKeyRef = useRef(null);
+  const [labelPicking, setLabelPicking] = useState(false);
+  const [labelDraft, setLabelDraft] = useState(null);
+  const labelEditingRef = useRef(false);
+  labelEditingRef.current = labelPicking || Boolean(labelDraft) || posePicking || switching || Boolean(session && !session.safety_ready);
 
   const send = useCallback((message) => {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -71,6 +85,8 @@ export default function App() {
     (topic, msg) => send({ op: "publish", topic, msg }),
     [send],
   );
+  const labelStore = useMapLabels({ connected, publish, mapName });
+  const onLabelMessage = labelStore.onMessage;
 
   const advertise = useCallback(() => {
     Object.values(TOPICS).forEach(([topic, type]) => {
@@ -81,10 +97,13 @@ export default function App() {
   const subscribe = useCallback(() => {
     [
       ["/map", "nav_msgs/msg/OccupancyGrid", 250],
+      ["/ui/map", "nav_msgs/msg/OccupancyGrid", 250],
       ["/ui/robot_pose", "geometry_msgs/msg/PoseStamped", 50],
       ["/plan", "nav_msgs/msg/Path", 100],
+      ["/ui/safety_status", "std_msgs/msg/String", 20],
       ["/ui/navigation_status", "std_msgs/msg/String", 20],
       ["/collision_monitor_state", "nav2_msgs/msg/CollisionMonitorState", 20],
+      ["/ui/map_labels", "std_msgs/msg/String", 0],
     ].forEach(([topic, type, throttle_rate]) => {
       send({ op: "subscribe", topic, type, throttle_rate, queue_length: 1 });
     });
@@ -105,6 +124,7 @@ export default function App() {
       const socket = new WebSocket(ROSBRIDGE_URL);
       socketRef.current = socket;
       socket.onopen = () => {
+        if (disposed || socketRef.current !== socket) return;
         setConnected(true);
         setStatus({ state: "ready", message: "Connected to ROS" });
         advertise();
@@ -112,11 +132,13 @@ export default function App() {
         setTimeout(() => publish(TOPICS.mode[0], { data: modeRef.current }), 100);
       };
       socket.onmessage = ({ data }) => {
+        if (disposed || socketRef.current !== socket) return;
         const packet = JSON.parse(data);
-        if (packet.topic === "/map") setMap(packet.msg);
-        if (packet.topic === "/ui/robot_pose") setRobotPose(packet.msg.pose);
-        if (packet.topic === "/plan") setPath(packet.msg.poses || []);
-        if (packet.topic === "/ui/navigation_status") {
+        if ((packet.topic === "/map" || packet.topic === "/ui/map") && !switchingRef.current) setMap(packet.msg);
+        if (packet.topic === "/ui/robot_pose" && !switchingRef.current) setRobotPose(packet.msg.pose);
+        if (packet.topic === "/plan" && !switchingRef.current) setPath(packet.msg.poses || []);
+        if (packet.topic === "/ui/map_labels") onLabelMessage(packet.msg);
+        if (packet.topic === "/ui/navigation_status" || packet.topic === "/ui/safety_status") {
           try {
             setStatus(JSON.parse(packet.msg.data));
           } catch {
@@ -125,17 +147,18 @@ export default function App() {
         }
         if (packet.topic === "/collision_monitor_state" && packet.msg.action_type > 0) {
           const action = ["clear", "stop", "slowdown", "approach", "limit"][packet.msg.action_type];
-          setStatus({ state: action, message: `Safety ${action}: ${packet.msg.polygon_name}` });
+          setStatus({ state: action, message: action === "stop" ? "Obstacle nearby: use Mapping controls to move away slowly" : `Safety ${action}: ${packet.msg.polygon_name}` });
         }
         if (packet.op === "service_response" && packet.id === "save-map") {
           setStatus({
-            state: packet.result ? "saved" : "failed",
-            message: packet.result ? `Map saved as ${mapNameRef.current}` : "Map save failed",
+            state: packet.result && packet.values?.result === 0 ? "saved" : "failed",
+            message: packet.result && packet.values?.result === 0 ? `Map saved as ${mapNameRef.current}` : "Map save failed: check the SLAM map and output path",
           });
         }
       };
       socket.onerror = () => socket.close();
       socket.onclose = () => {
+        if (disposed || socketRef.current !== socket) return;
         setConnected(false);
         setStatus({ state: "offline", message: "ROS disconnected; retrying…" });
         reconnectRef.current = setTimeout(connect, 1800);
@@ -147,7 +170,7 @@ export default function App() {
       clearTimeout(reconnectRef.current);
       socketRef.current?.close();
     };
-  }, [advertise, publish, subscribe]);
+  }, [advertise, publish, subscribe, onLabelMessage]);
 
   const setControlMode = useCallback(
     (nextMode) => {
@@ -156,9 +179,13 @@ export default function App() {
       latchRef.current = { x: 0, y: 0, z: 0 };
       setActiveMotion(null);
       setMode(nextMode);
+      if (nextMode !== "idle") setActiveTab(nextMode);
       setGoal(null);
       setPath([]);
-      setStatus({ state: "ready", message: nextMode === "mapping" ? "Drive to build the map" : "Click the map to set a goal" });
+      setLabelPicking(false);
+      setLabelDraft(null);
+      setPosePicking(false);
+      setStatus({ state: "ready", message: nextMode === "mapping" ? "Drive to build the map" : nextMode === "navigate" ? "Click the map to set a goal" : "Robot idle" });
     },
     [publish],
   );
@@ -166,7 +193,7 @@ export default function App() {
   // ── Latching helpers — mirror teleop_keyboard.py exactly ──────────────
   // Each direction key sets ONE axis and zeroes the other two.
   const latch = useCallback((key) => {
-    if (modeRef.current !== "mapping" || estop) return;
+    if (modeRef.current !== "mapping" || estop || labelEditingRef.current) return;
     const lin = linRef.current;
     const ang = angRef.current;
     const L = latchRef.current;
@@ -190,6 +217,33 @@ export default function App() {
     publish(TOPICS.teleop[0], zeroTwist());
   }, [publish]);
 
+  const labelEditing = labelPicking || Boolean(labelDraft) || posePicking || switching || Boolean(session && !session.safety_ready);
+  useEffect(() => {
+    if (labelEditing) {
+      stopMotion();
+      publish(TOPICS.cancel[0], { data: true });
+    }
+  }, [labelEditing, stopMotion, publish]);
+
+  useEffect(() => { if (labelPicking || labelDraft) setPosePicking(false); }, [labelPicking, labelDraft]);
+
+  const beginLabelPicking = () => {
+    setPosePicking(false);
+    stopMotion();
+    publish(TOPICS.cancel[0], { data: true });
+    setLabelPicking(true);
+  };
+
+  const pickLabel = world => {
+    if (!labelPicking || !map) return;
+    if (!freeMapCell(map, world)) {
+      setStatus({ state: "rejected", message: "Place the location on a known, free map cell" });
+      return;
+    }
+    setLabelDraft(previous => ({ ...previous, x: world.x, y: world.y, z: previous?.z ?? 0, yaw: previous?.yaw ?? 0 }));
+    setLabelPicking(false);
+  };
+
   const speedUp = useCallback(() => {
     setLinearSpeed((prev) => { const v = Math.min(+(prev + SPEED_STEP).toFixed(1), MAX_LIN); linRef.current = v; return v; });
     setAngularSpeed((prev) => { const v = Math.min(+(prev + SPEED_STEP).toFixed(1), MAX_ANG); angRef.current = v; return v; });
@@ -207,6 +261,8 @@ export default function App() {
   useEffect(() => {
     const directionKeys = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "w", "W", "a", "A", "s", "S", "d", "D", "q", "Q", "e", "E"]);
     const down = (event) => {
+      if (event.target instanceof HTMLElement &&
+          (event.target.isContentEditable || event.target.closest("input, textarea, select, button"))) return;
       if (directionKeys.has(event.key)) {
         event.preventDefault();
         latch(event.key);
@@ -242,79 +298,16 @@ export default function App() {
     };
   }, [latch, stopMotion, speedUp, speedDown, publish]);
 
-  useEffect(() => {
-    if (!map || !canvasRef.current) return;
-    const canvas = canvasRef.current;
-    const { width, height, resolution, origin } = map.info;
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    const image = context.createImageData(width, height);
-    for (let screenY = 0; screenY < height; screenY += 1) {
-      for (let x = 0; x < width; x += 1) {
-        const value = map.data[(height - 1 - screenY) * width + x];
-        const index = (screenY * width + x) * 4;
-        const shade = value < 0 ? [216, 220, 225] : value >= 50 ? [38, 43, 49] : [248, 250, 252];
-        image.data.set([...shade, 255], index);
-      }
-    }
-    context.putImageData(image, 0, 0);
-    const toPixel = (position) => ({
-      x: (position.x - origin.position.x) / resolution,
-      y: height - (position.y - origin.position.y) / resolution,
-    });
-    if (path.length > 1) {
-      context.beginPath();
-      context.strokeStyle = "#3ce6a8";
-      context.lineWidth = 3;
-      path.forEach((entry, index) => {
-        const point = toPixel(entry.pose.position);
-        if (index === 0) context.moveTo(point.x, point.y);
-        else context.lineTo(point.x, point.y);
-      });
-      context.stroke();
-    }
-    if (goal) drawMarker(context, goal.pixel.x, goal.pixel.y, "#ffb84a", 6);
-    if (robotPose) {
-      const point = toPixel(robotPose.position);
-      const yaw = quaternionYaw(robotPose.orientation);
-      context.save();
-      context.translate(point.x, point.y);
-      context.rotate(-yaw);
-      context.beginPath();
-      context.moveTo(10, 0);
-      context.lineTo(-7, -6);
-      context.lineTo(-7, 6);
-      context.closePath();
-      context.fillStyle = "#52a8ff";
-      context.fill();
-      context.restore();
-    }
-  }, [goal, map, path, robotPose]);
-
-  const mapClick = (event) => {
-    if (mode !== "navigate" || !map || estop) return;
-    const canvas = canvasRef.current;
-    const rect = canvas.getBoundingClientRect();
-    const pixel = {
-      x: ((event.clientX - rect.left) * canvas.width) / rect.width,
-      y: ((event.clientY - rect.top) * canvas.height) / rect.height,
-    };
-    const world = {
-      x: pixel.x * map.info.resolution + map.info.origin.position.x,
-      y: (canvas.height - pixel.y) * map.info.resolution + map.info.origin.position.y,
-    };
-    const gridX = Math.floor(pixel.x);
-    const gridY = Math.floor(canvas.height - pixel.y);
-    const occupancy = map.data[gridY * map.info.width + gridX];
-    if (occupancy == null || occupancy < 0 || occupancy >= 50) {
+  const mapGoal = (world) => {
+    if (mode !== "navigate" || !map || estop || switching || (session?.mode === "localization" && (!session.localized || !session.navigation_ready || !session.safety_ready))) return;
+    if (!freeMapCell(map, world)) {
       setStatus({ state: "rejected", message: "Choose a known, free map cell" });
       return;
     }
     const yaw = robotPose
       ? Math.atan2(world.y - robotPose.position.y, world.x - robotPose.position.x)
       : 0;
-    setGoal({ pixel, world });
+    setGoal({ world });
     publish(TOPICS.goal[0], {
       header: { stamp: nowStamp(), frame_id: "map" },
       pose: {
@@ -335,13 +328,54 @@ export default function App() {
     setStatus({ state: next ? "stop" : "ready", message: next ? "Software emergency stop engaged" : "Emergency stop released" });
   };
 
+  const switchMap = async (nextMode, mapId) => {
+    stopMotion();
+    publish(TOPICS.cancel[0], { data: true });
+    setControlMode("idle");
+    setPosePicking(false);
+    setMapSwitching(true);
+    try {
+      await consoleSession.request("/api/session", { mode: nextMode, map_id: mapId });
+      setMap(null); setRobotPose(null); setPath([]); setGoal(null);
+    } finally { setMapSwitching(false); }
+  };
+
+  useEffect(() => {
+    if (!session || session.transitioning) return;
+    const key = `${session.mode}:${session.selected_map?.id || ""}`;
+    if (sessionKeyRef.current === key) return;
+    const previousKey = sessionKeyRef.current;
+    sessionKeyRef.current = key;
+    setMap(null); setRobotPose(null); setPath([]); setGoal(null);
+    setControlMode(session.mode === "mapping" ? "mapping" : "idle");
+    if (session.selected_map) setMapName(session.selected_map.name);
+    else if (previousKey?.startsWith("localization:")) setMapName(`g1_map_${Date.now()}`);
+  }, [session, setControlMode]);
+
+  const canPose = connected && Boolean(map) && session?.mode === "localization" && session.amcl_ready && !switching && !estop;
+  const poseTool = () => {
+    stopMotion(); publish(TOPICS.cancel[0], { data: true });
+    setLabelPicking(false); setLabelDraft(null);
+    setPosePicking(previous => !previous);
+  };
+  const setInitialPose = ({ world, yaw }) => {
+    if (!canPose) return;
+    if (!freeMapCell(map, world)) {
+      setStatus({ state: "rejected", message: "Place the robot on a known, free map cell" });
+      return;
+    }
+    publish(TOPICS.initialPose[0], initialPoseMessage(world, yaw));
+    setPosePicking(false);
+    setStatus({ state: "localizing", message: "Initial pose sent. Wait for localization, then select Navigate." });
+  };
+
   const saveMap = () => {
     send({
       op: "call_service",
       id: "save-map",
       service: "/slam_toolbox/save_map",
       type: "slam_toolbox/srv/SaveMap",
-      args: { name: { data: mapName } },
+      args: { name: { data: session ? `${session.maps_dir}/${labelStore.mapId}` : mapName } },
     });
     setStatus({ state: "saving", message: `Saving ${mapName}…` });
   };
@@ -362,8 +396,9 @@ export default function App() {
       </header>
 
       <section className="modebar">
-        <button className={mode === "mapping" ? "active" : ""} onClick={() => setControlMode("mapping")}>01 · Mapping</button>
-        <button className={mode === "navigate" ? "active" : ""} onClick={() => setControlMode("navigate")}>02 · Navigate</button>
+        <button disabled={switching || session?.mode === "localization"} className={activeTab === "mapping" ? "active" : ""} onClick={() => setControlMode("mapping")}>01 · Mapping</button>
+        <button disabled={switching || (session?.mode === "localization" && (!session.localized || !session.navigation_ready || !session.safety_ready))} className={activeTab === "navigate" ? "active" : ""} onClick={() => setControlMode("navigate")}>02 · Navigate</button>
+        <button className={activeTab === "maps" ? "active" : ""} onClick={() => { setControlMode("idle"); setActiveTab("maps"); }}>03 · Maps & Locations</button>
         <button onClick={() => { publish(TOPICS.cancel[0], { data: true }); setControlMode("idle"); }}>Cancel / Idle</button>
         <button className={`estop ${estop ? "engaged" : ""}`} onClick={toggleEstop}>{estop ? "Release E-stop" : "Emergency stop"}</button>
       </section>
@@ -371,16 +406,29 @@ export default function App() {
       <section className="workspace">
         <div className="mapcard">
           <div className="cardhead"><span>LIVE OCCUPANCY MAP</span><span>{map ? `${map.info.width} × ${map.info.height} · ${map.info.resolution.toFixed(2)} m/cell` : "WAITING FOR /map"}</span></div>
-          <div className={`mapviewport ${mode === "navigate" ? "clickable" : ""}`}>
-            {map ? <canvas ref={canvasRef} onClick={mapClick} /> : <div className="empty"><div className="scanner" /><p>Waiting for SLAM map</p></div>}
-          </div>
-          <div className="legend"><span><i className="robot" /> G1</span><span><i className="route" /> planned path</span><span><i className="target" /> goal</span></div>
+          <MapView map={map} robotPose={robotPose} goal={goal} path={path}
+            canSetGoal={mode === "navigate" && !estop && !labelPicking && !labelDraft && !posePicking && !switching && (!session || (session.safety_ready && session.navigation_ready && (session.mode !== "localization" || session.localized)))} onGoal={mapGoal}
+            labels={labelStore.labels} labelDraft={labelDraft} labelPicking={labelPicking} onLabelPoint={pickLabel} posePicking={posePicking} onInitialPose={setInitialPose} staticMap={session?.mode === "localization"} />
+          <div className="legend"><span><i className="robot" /> G1</span><span><i className="route" /> planned path</span><span><i className="target" /> goal</span><span><i className="location" /> location</span></div>
         </div>
 
         <aside>
           <div className={`statuscard ${status.state}`}><p>ROBOT STATUS</p><strong>{status.message}</strong>{status.distance_remaining != null && <small>{status.distance_remaining.toFixed(2)} m remaining</small>}</div>
-          {mode === "mapping" && (
-            <div className="controlcard">
+          <div className="mapmanagement" hidden={activeTab !== "maps"}>
+          <MapSessionPanel consoleSession={consoleSession} onSwitch={switchMap}
+            posePicking={posePicking} onPoseTool={poseTool} canPose={canPose} />
+          <LabelsPanel store={labelStore} draft={labelDraft} setDraft={setLabelDraft}
+            picking={labelPicking} setPicking={setLabelPicking} beginPicking={beginLabelPicking} />
+          </div>
+          {mode === "mapping" && !labelPicking && !labelDraft && !posePicking && !switching && (!session || session.safety_ready) && (
+            <div className="controlcard" onKeyDown={event => {
+              if (event.target.closest("input")) return;
+              if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "w", "W", "s", "S", "a", "A", "d", "D", "q", "Q", "e", "E"].includes(event.key)) {
+                event.preventDefault(); event.stopPropagation(); latch(event.key);
+              } else if (event.key === " ") {
+                event.preventDefault(); event.stopPropagation(); stopMotion();
+              }
+            }}>
               <div className="cardhead"><span>MANUAL DRIVE</span><span>MAPPING ONLY</span></div>
               <div className="speed-readout">
                 <span>Speed: lin={linearSpeed.toFixed(1)} m/s &nbsp; ang={angularSpeed.toFixed(1)} rad/s</span>
@@ -417,7 +465,7 @@ export default function App() {
           )}
           <div className="savecard">
             <label htmlFor="map-name">MAP OUTPUT NAME OR PATH</label>
-            <div><input id="map-name" value={mapName} onChange={(event) => setMapName(event.target.value)} /><button disabled={mode !== "mapping"} onClick={saveMap}>Save</button></div>
+            <div><input id="map-name" disabled={switching || session?.mode === "localization"} value={mapName} onChange={(event) => setMapName(event.target.value)} /><button disabled={!connected || switching || mode !== "mapping"} onClick={saveMap}>Save</button></div>
           </div>
           <div className="limits"><span>PLANAR FLOOR MODE</span><p>No stair, drop-off, hole or footstep-planning support. Keep a physical E-stop and safety operator present.</p></div>
         </aside>
@@ -441,14 +489,4 @@ function twist(x, y, z) {
 
 function zeroTwist() {
   return twist(0, 0, 0);
-}
-
-function drawMarker(context, x, y, color, radius) {
-  context.beginPath();
-  context.arc(x, y, radius, 0, Math.PI * 2);
-  context.fillStyle = color;
-  context.fill();
-  context.lineWidth = 2;
-  context.strokeStyle = "#07111f";
-  context.stroke();
 }

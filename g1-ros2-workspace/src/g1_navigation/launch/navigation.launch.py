@@ -12,6 +12,8 @@ from launch_ros.actions import Node
 def generate_launch_description():
     nav_share = get_package_share_directory('g1_navigation')
     start_sim = LaunchConfiguration('start_sim')
+    start_web = LaunchConfiguration('start_web')
+    start_safety = LaunchConfiguration('start_safety')
     start_rosbridge = LaunchConfiguration('start_rosbridge')
     use_sim_time = LaunchConfiguration('use_sim_time')
     params_file = LaunchConfiguration('params_file')
@@ -32,6 +34,8 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument('start_sim', default_value='true'),
+            DeclareLaunchArgument('start_web', default_value='true'),
+            DeclareLaunchArgument('start_safety', default_value='true'),
             DeclareLaunchArgument('start_rosbridge', default_value='true'),
             DeclareLaunchArgument('use_sim_time', default_value='false'),
             DeclareLaunchArgument('params_file', default_value=default_params),
@@ -47,7 +51,7 @@ def generate_launch_description():
                         'sim.launch.py',
                     )
                 ),
-                launch_arguments={'cmd_vel_topic': '/cmd_vel_safe'}.items(),
+                launch_arguments={'cmd_vel_topic': '/cmd_vel_safe', 'start_rosbridge': 'false'}.items(),
                 condition=IfCondition(start_sim),
             ),
             IncludeLaunchDescription(
@@ -55,6 +59,7 @@ def generate_launch_description():
                     os.path.join(nav_share, 'launch', 'perception_web.launch.py')
                 ),
                 launch_arguments={'start_rosbridge': start_rosbridge}.items(),
+                condition=IfCondition(start_web),
             ),
             Node(
                 package='nav2_map_server',
@@ -68,7 +73,7 @@ def generate_launch_description():
                 executable='amcl',
                 name='amcl',
                 output='screen',
-                parameters=[params_file, common],
+                parameters=[params_file, common, {'set_initial_pose': False}],
             ),
             Node(
                 package='nav2_controller',
@@ -126,6 +131,7 @@ def generate_launch_description():
                     'params_file': params_file,
                     'use_sim_time': use_sim_time,
                 }.items(),
+                condition=IfCondition(start_safety),
             ),
         ]
     )
