@@ -10,6 +10,7 @@ def generate_launch_description():
     start_rosbridge = LaunchConfiguration('start_rosbridge')
     return LaunchDescription(
         [
+            DeclareLaunchArgument('start_labels', default_value='true'),
             DeclareLaunchArgument('start_rosbridge', default_value='true'),
             DeclareLaunchArgument('rosbridge_port', default_value='9090'),
             DeclareLaunchArgument('labels_dir', default_value=''),
@@ -41,6 +42,7 @@ def generate_launch_description():
             Node(
                 package='g1_navigation',
                 executable='map_labels',
+                condition=IfCondition(LaunchConfiguration('start_labels')),
                 name='g1_map_labels',
                 output='screen',
                 parameters=[{'labels_dir': LaunchConfiguration('labels_dir')}],

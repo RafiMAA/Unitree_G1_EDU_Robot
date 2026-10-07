@@ -48,7 +48,7 @@ Text fields do not trigger the global driving shortcuts.
 
 1. Set the map output name/path (for example `g1_map`) so labels are associated
    with that map. The basename identifies the location collection.
-2. Open **03 · Maps & Locations**, then in **Saved locations**, click **Add location**.
+2. Open **03 · Maps & Localization**, then in **Saved locations**, click **Add location**.
 3. Click a white, known-free map cell, type the location name, and click
    **Save location**. Dragging pans the view without selecting a point.
 4. Purple markers show saved names. **Rename**, **Move**, and **Delete** edit
@@ -116,11 +116,21 @@ or out-of-bounds goal cells.
 
 ## Start the complete console
 
-The default `npm run dev` now starts a local supervisor, MuJoCo, perception,
-rosbridge, label persistence, the velocity safety pipeline, SLAM + Nav2, and Vite.
-Stop older simulation/mapping/UI/label terminals first to avoid duplicate ROS
-nodes. Existing processes are never killed by the supervisor. Occupied console
-ports cause startup to stop with an explanation.
+`npm run dev` starts only the local process manager, rosbridge connection and
+React UI. It never launches or stops simulation. Start the simulator separately
+and keep its terminal running:
+
+```bash
+cd ~/Desktop/Rafi_Unitree_sem_Project/Unitree_G1_EDU_Robot_recovered/g1-ros2-workspace
+unset PYTHONPATH
+export PYTHONNOUSERSITE=1 ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=1 MUJOCO_GL=glfw
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+export PYTHONPATH="$PWD/.venv/lib/python3.10/site-packages:${PYTHONPATH:-}"
+ros2 launch g1_mujoco sim.launch.py start_rosbridge:=false cmd_vel_topic:=/cmd_vel_safe
+```
+
+Start the UI in another terminal:
 
 ```bash
 source ~/.nvm/nvm.sh
@@ -130,7 +140,7 @@ npm run dev
 ```
 
 ROS environments are sourced by the launcher. Defaults are Humble,
-`ROS_DOMAIN_ID=0`, `ROS_LOCALHOST_ONLY=1`, `MUJOCO_GL=glfw`. The workspace must
+`ROS_DOMAIN_ID=0`, `ROS_LOCALHOST_ONLY=1`. The workspace must
 already be built and its `.venv` must contain the working simulation dependencies.
 The console API uses system Python with `python3-yaml` and `python3-pil`.
 For a fresh checkout, build once:
@@ -148,7 +158,7 @@ owned by that console. Logs are in `g1-ros2-workspace/log/console/`.
 The UI and local process-control API listen on loopback addresses.
 
 Map loading, initial-pose placement and saved-location editing are grouped under
-**03 · Maps & Locations**. Opening this tab puts robot control into idle and
+**03 · Maps & Localization**. Opening this tab puts robot control into idle and
 cancels active navigation. The live map remains visible for placing poses and
 labels. Returning to Mapping or Navigate closes placement tools.
 
@@ -156,7 +166,7 @@ labels. Returning to Mapping or Navigate closes placement tools.
 
 1. Save any live SLAM map you want to keep. Loading a saved map stops SLAM;
    **New mapping** begins a new SLAM session, rather than continuing a saved grid.
-2. Open **03 · Maps & Locations**. In **Saved map / localization**, choose an existing map and click **Load map**.
+2. Open **03 · Maps & Localization**. In **Saved map / localization**, choose an existing map and click **Load map**.
    YAML/image pairs in `src/g1_navigation/maps` and the workspace root appear in
    the library. **Refresh maps** discovers newly saved files.
 3. For files elsewhere, expand **Import a map from disk** and select the ROS map
@@ -168,8 +178,8 @@ labels. Returning to Mapping or Navigate closes placement tools.
    actual location in white free space, drag toward its actual heading, and release.
    A green arrow previews the heading. Shift-drag/middle-drag still pan, and
    scrolling still zooms. A short click alone does not submit a pose.
-5. Once AMCL publishes a pose estimate and Nav2 is active, select **Navigate**
-   and click a free cell to set a destination. Labels work on loaded maps too.
+5. Once AMCL publishes a pose estimate, select **Navigate**. Wait for Nav2
+   and safety to become ready, then click a free cell to set a destination. Labels work on loaded maps too.
 
 The pose tool publishes `geometry_msgs/PoseWithCovarianceStamped` in `map` on
 `/initialpose`, as used by
@@ -178,59 +188,161 @@ It supplies an estimate for localization; it does **not** teleport the simulator
 or move the physical robot. Set the arrow to the robot's real position/heading
 within the saved environment. AMCL needs matching live laser scans and odometry.
 
-Cold startup starts Nav2 after the first SLAM map arrives, so the simulator
-and its transforms are ready before navigation configuration. Humble's SLAM
-node starts directly without a separate SLAM lifecycle manager.
+| UI action | Services started |
+| --- | --- |
+| Open UI | Process manager, rosbridge and Vite only |
+| Mapping | Perception/web gateway, SLAM and drive safety; no Nav2 |
+| Navigate | Nav2 and drive safety for the current map |
+| Maps & Localization | Location JSON saver; navigation and drive safety stop |
+| Load map | Perception, map server and AMCL; no Nav2 until Navigate is selected |
 
-The supervisor keeps simulation, rosbridge, labels and safety running during a
-map switch. It stops and reaps the previous SLAM/localization/Nav2 process group
-before starting the next. Static maps are replayed for browsers opening after
-map_server activation. Mapping and saved-map localization never run together.
-Navigation startup does not assume the robot is at `(0, 0)`.
+Mapping must receive a map before Navigate can start. A loaded map requires an
+initial pose first. Existing SLAM/AMCL and perception remain running across tab
+changes to preserve the map and localization; loading a different map or starting
+new mapping replaces them. Navigation and label editing start only when selected.
+Humble's SLAM node starts directly without a separate SLAM lifecycle manager.
+Static maps are replayed for late browser connections. AMCL never assumes a
+starting position of `(0, 0)`.
 
-For existing external ROS launches, `npm run ui` starts only Vite; it does not
-provide the map-switching API. For an externally supplied robot/sensor setup,
-`G1_START_SIM=false npm run dev` omits MuJoCo but still owns the remaining stack.
-Do not run duplicate mapping/Nav2/rosbridge launches in that ROS domain.
+Ctrl+C stops only console-owned services; the separately launched simulator
+continues running. Do not run duplicate mapping/Nav2/label/rosbridge launches in
+that ROS domain. `npm run ui` starts only Vite for externally managed ROS services
+and does not provide the process-control API. `G1_START_SIM` is no longer used.
 Optional test/deployment overrides: `G1_UI_PORT`, `G1_CONSOLE_PORT`,
 `G1_ROSBRIDGE_PORT`, and `G1_MAPS_DIR`.
 
 ```bash
-/usr/bin/python3 -m unittest discover -s scripts -p 'test_*.py'
+source /opt/ros/humble/setup.bash
+PYTHONPATH="$PWD/../g1-ros2-workspace/src/g1_conversation:${PYTHONPATH:-}" \
+  /usr/bin/python3 -m unittest discover -s scripts -p 'test_*.py'
 node --test src/mapGeometry.test.js src/initialPose.test.js
 npm run build
 ```
 
-## Recover from an obstacle stop
+## Manual mapping and navigation collision zones
 
-In **Mapping**, use **S / ↓** to retreat from a wall in front, **W / ↑** for
-an obstacle behind, or **Q / E** to move sideways away from an obstacle.
-Near a stop-zone obstacle, manual recovery is capped at a commanded **0.10 m/s**.
-Move clear before turning. The drive buttons also accept arrow keys and Space
-when they have keyboard focus; map-canvas arrow keys continue to pan the map.
+Manual **Mapping** bypasses collision stopping and slowdown. WASD / arrow-button
+commands and rotation pass through the velocity smoother to `/cmd_vel_safe`,
+even when LiDAR reports wall contact or obstacle data is missing. Emergency stop,
+Idle and stale-command timeouts still stop motion. Map-canvas arrow keys pan the
+view; use the drive buttons or WASD for robot motion.
 
-The final `retreat_guard` uses fresh base-frame LiDAR points to check that close obstacles retain clearance from the physical robot footprint and at
-least one gains clearance. It authorizes
-translation only: rotation, movement toward an obstacle, a trapped/penetrating physical
-footprint, emergency stop, idle mode and stale data remain stopped. Nav2 commands
-cannot use this manual recovery exception. Rear stop-zone coverage includes the
-padded rear footprint and its clearance margin.
+**Navigate** continues to use Collision Monitor with a smaller zone:
+- Stop: x from -0.31 to 0.41 m, y from -0.35 to 0.35 m.
+- Slowdown: x from -0.40 to 0.50 m, y from -0.39 to 0.39 m.
 
-The velocity pipeline is `/cmd_vel_muxed` → `/cmd_vel_smoothed` →
-Collision Monitor `/cmd_vel_collision` → retreat guard `/cmd_vel_safe`.
-The guard retains sensor timestamps, checks that Collision Monitor is active,
-and publishes zero when sensor or command input becomes stale.
-The locomotion activation threshold accepts the slow recovery command.
+Coordinates are relative to `base_footprint`; the stop zone surrounds the padded
+physical footprint. Both costmaps use 1 cm footprint padding, a 0.25 m
+inflation radius and a 6.0 cost scaling factor to reduce the extra corridor
+margin. The self-return mask uses 1 cm padding so it does not hide obstacles
+inside the smaller stop region. Navigation still stops on stale obstacle data. Its final
+output follows Collision Monitor without a second, larger hard-coded stop zone.
 
-The fixed stop polygon in
-[Humble Collision Monitor](https://raw.githubusercontent.com/ros-navigation/navigation2/humble/nav2_collision_monitor/src/collision_monitor_node.cpp)
-sets every commanded velocity component to zero while obstacles remain inside;
-the guarded recovery step resolves the resulting manual-drive deadlock.
+## Save and browse maps
 
-Recovery uses the physical footprint separately from its 5 cm planning padding.
-A wall entering the padding can still be escaped. Tangential motion is allowed
-when it preserves clearance and another close obstacle gains clearance; distant
-returns cannot veto a short retreat when their predicted clearance stays safe.
-The stop zone now starts farther away (0.65 m front, 0.55 m rear and 0.50 m
-on either side of the base origin). When stopped, Robot status lists the currently
-clear manual retreat directions. These hints update from the latest LiDAR cloud.
+**Save new map** works while live SLAM exists, including in Maps & Localization.
+It saves the received occupancy grid as a YAML/PNG pair in the map library,
+preserving its resolution, origin, orientation and unknown cells. The library
+refreshes and selects the saved map. Use a unique output name; existing maps
+are preserved. Saving a loaded static map is disabled.
+
+Under **Import a map from disk**, **Browse map files** accepts the map YAML and
+its referenced image together (Ctrl-click both files). The separate YAML/image
+pickers also work. **Import map** stores the pair; **Import & load** stores it and
+starts AMCL. Imported filenames that already exist receive a suggested copy name.
+Select an imported/saved map, click **Load map**, then place the initial pose.
+**Continue mapping** returns to an existing SLAM session; **New mapping** starts
+SLAM when a saved map is loaded or no mapping session exists.
+
+## RAG Conversation tab
+
+Run the usual command, then select **04 · RAG Conversation**:
+
+```bash
+source ~/.nvm/nvm.sh
+nvm use 22
+cd ~/Desktop/Rafi_Unitree_sem_Project/Unitree_G1_EDU_Robot_recovered/g1-navigation-ui
+npm run dev
+```
+
+The conversation worker starts only when you select this tab and stops when you
+leave it. It does not start simulation, microphone capture on the computer,
+or computer speaker playback. Selecting RAG cancels navigation and pauses
+manual robot control; an existing map session is retained. Simulation stays in
+its own terminal. You do not need to launch `conversation_node` separately.
+
+Set `GOOGLE_API_KEY` in `g1-ros2-workspace/.env` on the computer (or export it
+before starting the UI). This file is ignored by Git. Restart the UI after
+changing the key. The browser never receives the key. Gemini/embeddings need
+an active key and internet access. The existing airport knowledge base and
+per-conversation history are reused; no robot navigation goal is sent by chat.
+
+On first selection, the console installs conversation dependencies into
+`g1-ros2-workspace/.rag-venv`, separate from the simulator `.venv`.
+System prerequisites are `python3-venv` and `ffmpeg`; for Ubuntu:
+
+```bash
+sudo apt install python3-venv ffmpeg
+```
+
+First voice use can also download a Whisper model. The prepared environment
+and model downloads are reused. Worker logs are in
+`g1-ros2-workspace/log/console/rag.log`.
+
+Choose a language, type a message or press **Record voice**. Allow microphone
+access, speak, and pause to send, or press **Stop & send recording**. Each
+recording is limited to 60 seconds/4 MB. The computer checks speech with the
+existing Silero VAD, transcribes with faster-whisper, answers with airport RAG,
+and returns TTS audio to this browser. Silence does not reach the LLM.
+**Speak replies on this device** controls speech output; the audio player is
+also available when mobile browsers prevent automatic playback. Clear stops
+local recording/playback and clears this session's history. A submitted cloud
+request may finish on the backend before a new turn is accepted.
+
+Audio goes through the same-origin HTTP API; ROS state, commands, and the
+`/g1/speech_text` and `/g1/agent_response` notifications use ROS/rosbridge.
+The RAG tab uses bounded replies rather than the local microphone node's
+continuous streaming conversation. Browser pause detection ends the recording;
+the server's neural VAD validates and trims it independently.
+
+Optional computer environment settings:
+
+- `G1_STT_MODEL`: Whisper model name, default `base`.
+- `G1_TTS_BACKEND`: `auto` (Edge in the prepared browser environment), `edge`,
+  or `piper` if separately installed with voice models.
+- `G1_RAG_PYTHON`: absolute path to an existing fully configured Python;
+  skips automatic environment preparation.
+- `G1_RAG_ENV_FILE`: an additional dotenv file on the computer.
+- `G1_RAG_PORT`: loopback worker port, default `8767`.
+
+## Phone microphone and speaker
+
+Plain HTTP on a computer's LAN address does not provide browser microphone
+access. `localhost` works on the computer; a phone needs trusted HTTPS.
+Create local certificates once on the computer:
+
+```bash
+cd ~/Desktop/Rafi_Unitree_sem_Project/Unitree_G1_EDU_Robot_recovered/g1-navigation-ui
+npm run phone:setup
+```
+
+Copy **only** `.phone-tls/ca.crt` to the phone and explicitly trust this local CA
+in its operating system settings. Never copy `.key` files. On iOS, install the
+profile and enable its full trust in Certificate Trust Settings. On Android,
+install the CA certificate in Security / Encryption & credentials (wording
+varies by device). A certificate-warning bypass alone may not enable the mic.
+Trust this CA on the desktop too if continuing to use its HTTPS browser.
+
+Restart `npm run dev`. With the certificates present, Vite serves HTTPS on the
+computer's LAN interfaces. Connect both devices to the same trusted Wi-Fi and
+open the `https://<computer-IP>:5173` address printed by `phone:setup`.
+The browser uses a secure same-origin `/rosbridge` WebSocket proxy; rosbridge
+and the API/RAG ports do not need to be opened to the phone. Firewall access to
+TCP 5173 may be needed. Existing `VITE_ROSBRIDGE_URL` overrides should be
+removed when using HTTPS unless they point to a valid secure WebSocket.
+
+Run `phone:setup` again after the computer IP changes or certificates expire
+(one year). Keys/certificates remain local and are ignored by Git. Remove the
+`.phone-tls` directory to return to localhost HTTP. For externally managed TLS,
+set `G1_TLS_KEY` and `G1_TLS_CERT`; set `G1_UI_ALLOWED_ORIGINS` to the exact
+HTTPS origin when using a host not listed in the generated certificates.

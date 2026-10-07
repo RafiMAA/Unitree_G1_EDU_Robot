@@ -1,5 +1,7 @@
 """Tests for streaming neural voice activity detection."""
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -49,7 +51,8 @@ def _make_vad(monkeypatch, probabilities, **kwargs):
         "_create_detector",
         staticmethod(lambda **_kwargs: detector),
     )
-    monkeypatch.setattr(vad_module.sd, "RawInputStream", _FakeRawInputStream)
+    # Unit checks use a fake stream even where local PortAudio is unavailable.
+    monkeypatch.setattr(vad_module, "sd", SimpleNamespace(RawInputStream=_FakeRawInputStream))
     return VAD(backend="silero", **kwargs), detector
 
 

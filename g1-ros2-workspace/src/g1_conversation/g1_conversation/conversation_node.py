@@ -28,7 +28,7 @@ from .onboarding import (
     LANGUAGE_QUESTION,
     NAME_RETRY,
     extract_passenger_name,
-    get_pickme_introduction,
+    get_airport_introduction,
 )
 from .agent.rag_agent import create_agent, stream_agent_sentences
 from .agent.prompts import (
@@ -38,7 +38,7 @@ from .agent.prompts import (
 )
 
 class ConversationNode(Node):
-    """PickMe Robotic Mobility Concierge — main ROS2 node.
+    """Airport Passenger Assistant — main ROS2 node.
 
     Manages the full voice conversation pipeline:
     1. VAD detects passenger speech
@@ -361,7 +361,7 @@ class ConversationNode(Node):
                     passenger_name=session.passenger_name,
                 )
 
-            introduction = get_pickme_introduction(
+            introduction = get_airport_introduction(
                 selected_language, session.passenger_name or "friend"
             )
             self.get_logger().info(
@@ -369,7 +369,7 @@ class ConversationNode(Node):
             )
             self._publish_agent_response(introduction)
             self._publish_state("speaking")
-            with self._timed_stage("onboarding: PickMe introduction"):
+            with self._timed_stage("onboarding: airport introduction"):
                 self.tts.speak(
                     introduction, lang_code=selected_language, cache=False
                 )
@@ -555,16 +555,17 @@ class ConversationNode(Node):
     def _get_farewell(self, lang_code: str) -> str:
         """Get a farewell message in the session language."""
         farewells = {
-            "en": "It was a pleasure assisting you today. Enjoy your stay in Sri Lanka with PickMe as your mobility companion!",
-            "fr": "Ce fut un plaisir de vous aider. Profitez de votre séjour au Sri Lanka avec PickMe !",
-            "de": "Es war mir eine Freude, Ihnen zu helfen. Genießen Sie Ihren Aufenthalt in Sri Lanka mit PickMe!",
-            "es": "Fue un placer ayudarte. ¡Disfruta tu estancia en Sri Lanka con PickMe!",
-            "ja": "お手伝いできて光栄です。PickMeと一緒にスリランカでのご滞在をお楽しみください！",
-            "zh": "很高兴为您服务。祝您在斯里兰卡旅途愉快，PickMe随时为您服务！",
-            "ko": "도움을 드릴 수 있어서 기뻤습니다. PickMe와 함께 스리랑카에서의 체류를 즐기세요!",
-            "hi": "आपकी सहायता करके खुशी हुई। PickMe के साथ श्रीलंका में अपने प्रवास का आनंद लें!",
-            "si": "ඔබට සහය වීම සතුටක්. PickMe සමඟ ශ්‍රී ලංකාවේ ඔබේ සංචාරය භුක්ති විඳින්න!",
-            "ta": "உங்களுக்கு உதவ மகிழ்ச்சி. PickMe உடன் இலங்கையில் உங்கள் தங்குதலை மகிழுங்கள்!",
+            'en': 'Glad I could help. Have a pleasant journey through the airport!',
+            'fr': 'Ravi de vous avoir aidé. Bon voyage !',
+            'de': 'Ich freue mich, dass ich helfen konnte. Gute Reise!',
+            'es': 'Me alegra haberle ayudado. ¡Buen viaje!',
+            'ru': 'Рад был помочь. Приятного путешествия!',
+            'ja': 'お手伝いできてうれしいです。どうぞ良い旅を！',
+            'zh': '很高兴能帮到您。祝您旅途愉快！',
+            'ko': '도움이 되어 기쁩니다. 즐거운 여행 되세요!',
+            'hi': 'मदद करके खुशी हुई। आपकी यात्रा सुखद हो!',
+            'si': 'ඔබට උදව් කිරීමට ලැබීම සතුටක්. සුබ ගමනක්!',
+            'ta': 'உங்களுக்கு உதவியதில் மகிழ்ச்சி. இனிய பயணம் அமையட்டும்!',
         }
         return farewells.get(lang_code, farewells["en"])
 

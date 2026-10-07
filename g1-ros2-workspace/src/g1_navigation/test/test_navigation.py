@@ -52,3 +52,22 @@ def test_navigation_yaml_has_live_cloud_and_safe_output():
     assert local['obstacle_layer']['mid360']['clearing'] is True
     assert collision['cmd_vel_out_topic'] == '/cmd_vel_collision'
     assert collision['mid360']['type'] == 'pointcloud'
+
+
+def test_compact_stop_margin_is_not_removed_as_robot_self_returns():
+    # Obstacles just outside the body must remain visible to Collision Monitor.
+    points = np.array([[.40, 0, .8], [-.30, 0, .8], [0, .34, .8], [0, -.34, .8]])
+    np.testing.assert_allclose(filter_navigation_points(points), points)
+    assert len(filter_navigation_points(np.array([[.38, 0, .8], [-.28, 0, .8], [0, .32, .8]]))) == 0
+
+
+def test_narrow_corridor_costmaps_retain_physical_footprint_with_less_padding():
+    config = yaml.safe_load((Path(__file__).parents[1] / 'config/nav2_params.yaml').read_text())
+    for name in ('local_costmap', 'global_costmap'):
+        params = config[name][name]['ros__parameters']
+        footprint = np.array(yaml.safe_load(params['footprint']))
+        assert np.ptp(footprint[:, 1]) == .64
+        assert params['footprint_padding'] == .01
+        inflation = params['inflation_layer']
+        assert inflation['inflation_radius'] == .25
+        assert inflation['cost_scaling_factor'] == 6.0

@@ -115,3 +115,26 @@ aside { display: flex; flex-direction: column; gap: 12px; }
 
 .mapmanagement { display: grid; gap: 12px; }
 .mapmanagement[hidden] { display: none; }
+
+.workspace[hidden] { display: none; }
+.ragpanel { border: 1px solid #294255; border-radius: 12px; overflow: hidden; background: #08131d; }
+.ragbody { padding: 20px; color: #cde0e8; }
+.ragbody > p { line-height: 1.6; }
+.ragsettings { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.ragbody label { display: grid; gap: 8px; font-size: 13px; }
+.ragbody select, .ragbody input:not([type=checkbox]), .ragbody textarea { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #294255; border-radius: 7px; background: #050b13; color: #dceaf5; font: inherit; }
+.ragmessages { min-height: 240px; max-height: 440px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; margin: 20px 0; padding: 16px; background: #050b13; border-radius: 8px; }
+.ragmessages article { max-width: 85%; padding: 12px 16px; border-radius: 9px; background: #132b3e; }
+.ragmessages article.human { align-self: flex-end; background: #143b36; }
+.ragmessages strong { font-size: 12px; color: #3ce6a8; }
+.ragmessages p { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.ragbody textarea { margin-top: 8px; min-height: 90px; resize: vertical; }
+.ragactions { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+.ragactions button { padding: 12px 16px; background: #19374c; color: #dceaf5; border: 1px solid #294255; border-radius: 7px; cursor: pointer; }
+.ragactions button:first-child, .ragactions button.active { color: #06130f; background: #3ce6a8; }
+.ragactions button:disabled { opacity: .4; cursor: default; }
+.ragpreferences { display: flex; flex-wrap: wrap; gap: 16px; margin: 16px 0; }
+.ragpreferences label { display: flex; align-items: center; gap: 8px; }
+.ragpreferences input { accent-color: #3ce6a8; }
+.ragbody audio { width: 100%; max-width: 500px; }
+@media (max-width: 600px) { .ragsettings { grid-template-columns: 1fr; } .ragbody { padding: 14px; } .ragmessages { padding: 8px; } .ragmessages article { max-width: 95%; } }

@@ -62,6 +62,31 @@ class MapLibrary:
                 return Path(identifier)
         raise ValueError('Choose a map from the saved map library')
 
+    def save_grid(self, name, grid):
+        """Save the received ROS grid, including origin/orientation, atomically."""
+        name = map_name(name)
+        width, height = grid.info.width, grid.info.height
+        if not width or not height or len(grid.data) != width * height:
+            raise ValueError('No complete map has arrived yet')
+        if width * height > 25_000_000:
+            raise ValueError('Map exceeds 25 million cells')
+        # ROS row zero is south; image row zero is north. Unknown (205) stays
+        # between the standard trinary thresholds after map_server reload.
+        pixels = [205 if v < 0 else round(254 * (1 - min(v, 100) / 100)) for v in grid.data]
+        image = Image.new('L', (width, height))
+        image.putdata([v for row in range(height - 1, -1, -1)
+                       for v in pixels[row * width:(row + 1) * width]])
+        data = io.BytesIO()
+        image.save(data, 'PNG')
+        origin = grid.info.origin
+        q = origin.orientation
+        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        document = {'image': f'{name}.png', 'resolution': grid.info.resolution,
+                    'origin': [origin.position.x, origin.position.y, yaw],
+                    'negate': 0, 'mode': 'trinary', 'free_thresh': 0.196, 'occupied_thresh': 0.65}
+        return self.import_map({'name': name, 'yaml': yaml.safe_dump(document),
+                                'image_name': f'{name}.png', 'image': base64.b64encode(data.getvalue()).decode()})
+
     def import_map(self, payload):
         name = map_name(payload.get('name'))
         destination = self.directory / f'{name}.yaml'

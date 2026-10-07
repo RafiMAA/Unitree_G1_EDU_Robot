@@ -8,8 +8,10 @@ import socket
 import subprocess
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import rclpy
 from lifecycle_msgs.srv import GetState
@@ -24,6 +26,7 @@ UI = Path(__file__).resolve().parents[1]
 WORKSPACE = UI.parent / 'g1-ros2-workspace'
 API_PORT = int(os.environ.get('G1_CONSOLE_PORT', '8765'))
 UI_PORT = int(os.environ.get('G1_UI_PORT', '5173'))
+RAG_PORT = int(os.environ.get('G1_RAG_PORT', '8767'))
 BRIDGE_PORT = int(os.environ.get('G1_ROSBRIDGE_PORT', '9090'))
 LIBRARY = MapLibrary(os.environ.get('G1_MAPS_DIR', WORKSPACE / 'src/g1_navigation/maps'), WORKSPACE)
 LOGS = WORKSPACE / 'log/console'
@@ -33,9 +36,11 @@ class Supervisor:
     def __init__(self):
         self.lock = threading.RLock()
         self.processes = {}
-        self.mode = 'mapping'
+        self.mode = 'idle'
+        self.tab = None
         self.selected = None
         self.error = ''
+        self.rag_error = ''
         self.transitioning = False
         self.amcl_ready = False
         self.navigation_ready = False
@@ -43,8 +48,11 @@ class Supervisor:
         self.node = rclpy.create_node('g1_console_supervisor')
         self.mode_pub = self.node.create_publisher(String, '/ui/mode', 10)
         self.cancel_pub = self.node.create_publisher(Bool, '/ui/cancel_navigation', 10)
+        self.speech_pub = self.node.create_publisher(String, '/g1/speech_text', 10)
+        self.answer_pub = self.node.create_publisher(String, '/g1/agent_response', 10)
         self.clients = {name: self.node.create_client(GetState, f'/{name}/get_state') for name in ('amcl', 'bt_navigator', 'collision_monitor', 'velocity_smoother')}
         self.futures = {}
+        self.future_started = {}
         self.readiness = {}
         self.node.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self.on_pose, 10)
         self.node.create_subscription(PoseWithCovarianceStamped, '/initialpose', self.on_initial_pose, 10)
@@ -74,7 +82,13 @@ class Supervisor:
         for name, client in self.clients.items():
             future = self.futures.get(name)
             if future is not None and not future.done():
-                continue
+                # A tab switch can destroy a service while its request is in
+                # flight. Retire that request so the replacement node is polled.
+                if time.monotonic() - self.future_started.get(name, 0) < 2.0:
+                    continue
+                future.cancel()
+                self.futures.pop(name, None)
+                future = None
             ready = False
             if future is not None:
                 try:
@@ -88,6 +102,7 @@ class Supervisor:
             self.readiness[name] = ready
             if client.service_is_ready():
                 self.futures[name] = client.call_async(GetState.Request())
+                self.future_started[name] = time.monotonic()
             else:
                 self.futures.pop(name, None)
 
@@ -120,44 +135,123 @@ class Supervisor:
         if self.mode == 'mapping':
             command = ['ros2', 'launch', 'g1_navigation', 'mapping.launch.py', 'start_sim:=false', 'start_web:=false', 'start_nav:=false', 'cmd_vel_topic:=/cmd_vel_controller']
         else:
-            command = ['ros2', 'launch', 'g1_navigation', 'navigation.launch.py', 'start_sim:=false', 'start_web:=false', 'start_safety:=false', f'map:={self.selected["id"]}']
+            command = ['ros2', 'launch', 'g1_navigation', 'navigation.launch.py', 'start_sim:=false', 'start_web:=false', 'start_safety:=false', 'start_nav:=false', f'map:={self.selected["id"]}']
         self.spawn('stack', command)
 
+    def ensure(self, name, command):
+        if name not in self.processes:
+            self.spawn(name, command)
+
+    def ensure_web(self):
+        self.ensure('web', ['ros2', 'launch', 'g1_navigation', 'perception_web.launch.py',
+                            'start_rosbridge:=false', 'start_labels:=false'])
+
+    def ensure_rag(self):
+        old = self.processes.get('rag')
+        if old and old.poll() is not None:
+            self.stop('rag')
+        if 'rag' not in self.processes:
+            with socket.socket() as probe:
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    probe.bind(('127.0.0.1', RAG_PORT))
+                except OSError as exc:
+                    raise ValueError(f'Conversation port {RAG_PORT} is already occupied') from exc
+            self.rag_error = ''
+            self.spawn('rag', ['/usr/bin/python3', str(UI / 'scripts/rag-launcher.py')])
+
+    def rag_request(self, route, payload=None):
+        if self.tab != 'rag' or self.transitioning:
+            raise ValueError('Open the RAG Conversation tab first')
+        process = self.processes.get('rag')
+        if not process or process.poll() is not None:
+            raise ValueError(self.rag_error or 'Conversation backend is stopped. Reopen the RAG tab to retry')
+        request = Request(f'http://127.0.0.1:{RAG_PORT}/{route}',
+                          data=json.dumps(payload).encode() if payload is not None else None,
+                          headers={'Content-Type': 'application/json'})
+        try:
+            with urlopen(request, timeout=180 if route in ('turn', 'end') else 2) as response:
+                result = json.load(response)
+        except HTTPError as exc:
+            raise ValueError(json.load(exc).get('error', 'Conversation request failed')) from exc
+        except (URLError, TimeoutError) as exc:
+            raise ValueError('Preparing conversation. Please wait, or check log/console/rag.log if it does not finish') from exc
+        if route == 'turn':
+            self.speech_pub.publish(String(data=result['transcript']))
+            self.answer_pub.publish(String(data=result['answer']))
+        return result
+
     def start(self):
-        if os.environ.get('G1_START_SIM', 'true').lower() != 'false':
-            self.spawn('simulation', ['ros2', 'launch', 'g1_mujoco', 'sim.launch.py', 'start_rosbridge:=false', 'cmd_vel_topic:=/cmd_vel_safe'])
-        self.spawn('web', ['ros2', 'launch', 'g1_navigation', 'perception_web.launch.py', f'rosbridge_port:={BRIDGE_PORT}', f'labels_dir:={LIBRARY.directory}'])
-        self.spawn('safety', ['ros2', 'launch', 'g1_navigation', 'safety.launch.py'])
-        self.launch_stack()
+        # Simulation is always supplied externally; opening the UI is inert.
+        self.spawn('bridge', ['ros2', 'run', 'rosbridge_server', 'rosbridge_websocket',
+                             '--ros-args', '-p', f'port:={BRIDGE_PORT}',
+                             '-p', 'default_call_service_timeout:=8.0',
+                             '-p', 'call_services_in_new_thread:=true'])
         self.spawn('ui', ['npm', 'run', 'ui'], UI)
 
     def switch(self, payload):
         with self.lock:
             if self.transitioning:
-                raise ValueError('A map switch is already in progress')
+                raise ValueError('A tab or map switch is already in progress')
             mode = payload.get('mode')
-            if mode not in ('mapping', 'localization'):
-                raise ValueError('Choose mapping or localization')
-            selected = None
-            if mode == 'localization':
-                path = LIBRARY.resolve(payload.get('map_id'))
-                selected = {'id': str(path), 'name': path.stem}
-            if self.mode == mode and self.selected == selected:
-                return
+            tab = payload.get('tab')
+            selected = self.selected
+            if mode is not None:
+                if mode not in ('mapping', 'localization'):
+                    raise ValueError('Choose mapping or localization')
+                tab = 'mapping' if mode == 'mapping' else 'maps'
+                selected = None
+                if mode == 'localization':
+                    path = LIBRARY.resolve(payload.get('map_id'))
+                    selected = {'id': str(path), 'name': path.stem}
+            elif tab not in ('mapping', 'navigate', 'maps', 'rag'):
+                raise ValueError('Choose Mapping, Navigate, Maps & Localization or RAG Conversation')
+            if tab == 'mapping':
+                mode, selected = 'mapping', None
+            if tab == 'navigate' and (self.mode == 'idle' or self.map is None):
+                raise ValueError('Start Mapping or load a saved map before navigating')
+            if tab == 'navigate' and self.mode == 'localization' and not self.localized:
+                raise ValueError('Set the initial pose in Maps & Localization first')
+            mode = mode or self.mode
             self.transitioning = True
             self.error = ''
             self.mode_pub.publish(String(data='idle'))
             self.cancel_pub.publish(Bool(data=True))
+
             def transition():
                 try:
-                    self.stop('stack_nav')
-                    self.stop('stack')
-                    self.map = None
-                    self.mode, self.selected = mode, selected
-                    self.localized = self.amcl_ready = self.navigation_ready = False
-                    self.futures.clear()
-                    self.launch_stack()
-                    self.mode_pub.publish(String(data='mapping' if mode == 'mapping' else 'idle'))
+                    if tab != 'navigate':
+                        self.stop('stack_nav')
+                        self.navigation_ready = False
+                    if tab != 'rag':
+                        self.stop('rag')
+                    if tab in ('maps', 'rag'):
+                        self.stop('safety')
+                        if tab == 'maps':
+                            self.ensure('labels', ['ros2', 'run', 'g1_navigation', 'map_labels',
+                                                   '--ros-args', '-p', f'labels_dir:={LIBRARY.directory}'])
+                        else:
+                            self.stop('labels')
+                            self.ensure_rag()
+                    else:
+                        self.stop('labels')
+                        self.ensure_web()
+                        self.ensure('safety', ['ros2', 'launch', 'g1_navigation', 'safety.launch.py'])
+                    if self.mode != mode or self.selected != selected:
+                        self.stop('stack_nav')
+                        self.stop('stack')
+                        self.map = None
+                        self.mode, self.selected = mode, selected
+                        self.localized = self.amcl_ready = self.navigation_ready = False
+                        self.futures.clear()
+                        self.ensure_web()
+                        self.launch_stack()
+                    if tab == 'navigate':
+                        self.ensure('stack_nav', ['ros2', 'launch', 'g1_navigation', 'mapping.launch.py',
+                                                 'start_sim:=false', 'start_web:=false', 'start_slam:=false',
+                                                 'start_nav:=true', 'cmd_vel_topic:=/cmd_vel_controller'])
+                    self.tab = tab
+                    self.mode_pub.publish(String(data=tab if tab in ('mapping', 'navigate') else 'idle'))
                 except Exception as exc:
                     self.error = str(exc)
                 finally:
@@ -165,8 +259,9 @@ class Supervisor:
             threading.Thread(target=transition, daemon=True).start()
 
     def status(self):
-        return {'managed': True, 'mode': self.mode, 'selected_map': self.selected, 'transitioning': self.transitioning,
-                'safety_ready': all(self.readiness.get(name, False) for name in ('collision_monitor', 'velocity_smoother')),
+        return {'managed': True, 'tab': self.tab, 'mode': self.mode, 'selected_map': self.selected, 'transitioning': self.transitioning,
+                'safety_ready': 'safety' in self.processes and all(self.readiness.get(name, False) for name in (('velocity_smoother',) if self.tab == 'mapping' else ('collision_monitor', 'velocity_smoother'))),
+                'labels_ready': 'labels' in self.processes and self.node.count_subscribers('/ui/map_label_command') > 0,
                 'amcl_ready': self.amcl_ready, 'navigation_ready': self.navigation_ready, 'localized': self.localized,
                 'maps_dir': str(LIBRARY.directory), 'maps': LIBRARY.maps(), 'error': self.error,
                 'processes': {name: {'running': p.poll() is None, 'exit_code': p.poll()} for name, p in list(self.processes.items())}}
@@ -178,7 +273,7 @@ class Supervisor:
         if rclpy.ok():
             self.mode_pub.publish(String(data='idle'))
             self.cancel_pub.publish(Bool(data=True))
-        for name in ('stack_nav', 'stack', 'safety', 'web', 'simulation', 'ui'):
+        for name in ('rag', 'stack_nav', 'stack', 'safety', 'labels', 'web', 'bridge', 'ui'):
             self.stop(name)
 
 
@@ -198,14 +293,27 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/api/session':
             self.respond(200, self.server.supervisor.status())
+        elif self.path == '/api/rag/status':
+            try:
+                self.respond(200, self.server.supervisor.rag_request('status'))
+            except ValueError as exc:
+                self.respond(200, {'ready': False, 'configured': False, 'stage': 'Preparing conversation', 'error': str(exc)})
         else:
             self.respond(404, {'error': 'Unknown API route'})
 
     def do_POST(self):
         try:
             origin = self.headers.get('Origin')
-            if origin and origin not in (f'http://localhost:{UI_PORT}', f'http://127.0.0.1:{UI_PORT}'):
-                raise ValueError('Use the local navigation console')
+            allowed_hosts = {'localhost', '127.0.0.1', socket.gethostname()}
+            hosts_file = UI / '.phone-tls/hosts.json'
+            if hosts_file.exists():
+                allowed_hosts.update(json.loads(hosts_file.read_text()))
+            extra_origins = os.environ.get('G1_UI_ALLOWED_ORIGINS', '').split(',')
+            parsed = urlparse(origin or '')
+            if origin and origin not in extra_origins and not (
+                    parsed.scheme in ('http', 'https') and parsed.hostname in allowed_hosts
+                    and parsed.port == UI_PORT):
+                raise ValueError('Use the configured navigation console address')
             if self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
                 raise ValueError('Expected application/json')
             length = int(self.headers.get('Content-Length', 0))
@@ -214,7 +322,15 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length))
             if not isinstance(payload, dict):
                 raise ValueError('Expected a JSON object')
-            if self.path == '/api/maps/import':
+            if self.path in ('/api/rag/turn', '/api/rag/end'):
+                result = self.server.supervisor.rag_request(self.path.rsplit('/', 1)[1], payload)
+            elif self.path == '/api/maps/save':
+                with self.server.supervisor.lock:
+                    supervisor = self.server.supervisor
+                    if supervisor.transitioning or supervisor.mode != 'mapping' or supervisor.map is None:
+                        raise ValueError('Start Mapping and wait for a live map before saving')
+                    result = LIBRARY.save_grid(payload.get('name'), supervisor.map)
+            elif self.path == '/api/maps/import':
                 with self.server.supervisor.lock:
                     result = LIBRARY.import_map(payload)
             elif self.path == '/api/session':
@@ -231,11 +347,13 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     for port in (API_PORT, BRIDGE_PORT, UI_PORT):
         with socket.socket() as probe:
+            # Match HTTPServer reuse behavior so a recent Ctrl+C can restart.
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 probe.bind(('127.0.0.1', port))
             except OSError:
                 raise SystemExit(f'Port {port} is already in use. Stop your earlier UI/ROS launch terminals before running npm run dev. No existing process was stopped.')
-    os.environ['VITE_ROSBRIDGE_URL'] = f'ws://localhost:{BRIDGE_PORT}'
+    os.environ['G1_ROSBRIDGE_PORT'] = str(BRIDGE_PORT)
     rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
     supervisor = Supervisor()
     server = ThreadingHTTPServer(('127.0.0.1', API_PORT), Handler)
@@ -252,15 +370,19 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
     try:
         supervisor.start()
-        print(f'Open http://localhost:{UI_PORT} — Ctrl+C stops this console and its ROS processes.', flush=True)
+        tls_cert = Path(os.environ.get('G1_TLS_CERT', UI / '.phone-tls/server.crt'))
+        tls_key = Path(os.environ.get('G1_TLS_KEY', UI / '.phone-tls/server.key'))
+        scheme = 'https' if tls_cert.exists() and tls_key.exists() else 'http'
+        print(f'Open {scheme}://localhost:{UI_PORT} — Ctrl+C stops this console and its ROS processes.', flush=True)
         while True:
             time.sleep(1)
-            if supervisor.mode == 'mapping' and not supervisor.transitioning and supervisor.map is not None and 'stack_nav' not in supervisor.processes:
-                supervisor.spawn('stack_nav', ['ros2', 'launch', 'g1_navigation', 'mapping.launch.py', 'start_sim:=false', 'start_web:=false', 'start_slam:=false', 'start_nav:=true', 'cmd_vel_topic:=/cmd_vel_controller'])
             for name, process in list(supervisor.processes.items()):
-                if name in ('stack', 'stack_nav') and supervisor.transitioning:
+                if supervisor.transitioning:
                     continue
                 if process.poll() is not None:
+                    if name == 'rag':
+                        supervisor.rag_error = 'Conversation setup stopped. Check log/console/rag.log, then reopen the RAG tab'
+                        continue
                     raise RuntimeError(f'{name} exited ({process.returncode}). See {LOGS / (name + ".log")}')
     except KeyboardInterrupt:
         pass

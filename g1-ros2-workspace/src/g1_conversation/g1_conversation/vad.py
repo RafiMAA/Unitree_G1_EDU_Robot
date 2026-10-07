@@ -392,3 +392,27 @@ class VAD:
             duration = len(audio_float32) / self.sample_rate
             status_callback(f"captured {duration:.2f}s of audio")
         return audio_float32
+
+
+def trim_browser_recording(audio: np.ndarray, detector, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
+    """Check an uploaded recording with the same detector used for local VAD.
+
+    Keep a 160 ms margin around detected speech. No microphone is opened.
+    A silent/noise-only recording returns an empty array instead of reaching STT.
+    """
+    audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if sample_rate != SAMPLE_RATE or not np.isfinite(audio).all():
+        raise ValueError("Audio must be finite mono audio at 16000 Hz")
+    detector.reset()
+    pcm = (np.clip(audio, -1, 1) * 32767).astype('<i2')
+    voiced = []
+    for offset in range(0, len(pcm), detector.frame_size):
+        frame = pcm[offset:offset + detector.frame_size]
+        if len(frame) < detector.frame_size:
+            frame = np.pad(frame, (0, detector.frame_size - len(frame)))
+        if detector.speech_probability(frame.tobytes(), sample_rate) >= SPEECH_PROBABILITY_THRESHOLD:
+            voiced.append(offset)
+    if len(voiced) < 2:
+        return np.array([], dtype=np.float32)
+    padding = int(sample_rate * TRAILING_SILENCE_MS / 1000)
+    return audio[max(0, voiced[0] - padding):min(len(audio), voiced[-1] + detector.frame_size + padding)]

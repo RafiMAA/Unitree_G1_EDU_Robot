@@ -5,25 +5,25 @@ with the companion [architecture diagram](./g1_conversation_architecture.svg).
 
 ## Thirty-second introduction
 
-The `g1_conversation` ROS 2 node turns the Unitree G1 into a friendly PickMe
-airport concierge. It waves while greeting a passenger, remembers their name,
+The `g1_conversation` ROS 2 node turns the Unitree G1 into a friendly airport
+passenger assistant. It waves while greeting a passenger, remembers their name,
 asks for their preferred language, listens until they finish speaking,
-transcribes locally, retrieves trusted PickMe facts from FAISS, streams one
+transcribes locally, retrieves trusted airport assistance facts from FAISS, streams one
 concise Gemini response, and speaks it through the robot in the selected
 language.
 
 ## What the audience sees
 
-1. The robot waves and says: “Hello! Ayubowan. Welcome to Sri Lanka. I'm
-   PickMe. What's your name?”
+1. The robot waves and says: “Hello! Ayubowan. I'm your airport assistant. I can help you find
+   places and services in the airport. What's your name?”
 2. The passenger gives a name. The deterministic parser extracts only the
    name, including common Whisper forms such as “Hi, my name is John” or
    `my nameis John`.
 3. The robot uses the name naturally and asks which language the passenger
    prefers.
-4. It gives a short localized PickMe introduction.
-5. The passenger can ask about PickMe services, vehicles, locations, fares,
-   or app installation. They can also request a supported language later.
+4. It gives a short localized airport assistance introduction.
+5. The passenger can ask about airport facilities, boarding gates, baggage claim,
+   washrooms and accessibility. They can also request a supported language later.
 6. Saying goodbye or remaining silent for the idle timeout ends the session
    and clears passenger data.
 
@@ -106,9 +106,9 @@ whether to call a search tool.
 
 The maintained knowledge base contains four Markdown files:
 
-- `pickme_services.md`
-- `app_installation.md`
-- `sri_lanka_locations.md`
+- `airport_services.md`
+- `passenger_journey.md`
+- `airport_wayfinding.md`
 - `robot_concierge.md`
 
 The recursive splitter uses 500-character chunks with 50-character overlap
@@ -117,8 +117,8 @@ chunks; this count changes automatically when the files change.
 
 `models/gemini-embedding-001` converts the chunks and each query into vectors.
 FAISS stores and searches those vectors locally. The index and manifest live
-under `~/.g1_conversation/faiss_index`. A fingerprint based on the knowledge
-files' paths, modification times, and sizes decides whether to load the cache
+under `~/.g1_conversation/airport_faiss_index`. A fingerprint based on the knowledge
+files' names and contents decides whether to load the cache
 or rebuild it.
 
 ### 7. One concise, streamed Gemini response
@@ -126,8 +126,8 @@ or rebuild it.
 The current model is `gemini-3.5-flash-lite` with minimal thinking,
 temperature `0.2`, a 96-token limit, a 12-second request timeout, and one
 retry. The prompt asks for at most two short sentences and roughly 45 spoken
-words. It also fixes the PickMe brand fact: the logo has a yellow background
-with a black passenger figure.
+words. The prompt requires verified routes and prevents invented locations,
+gate assignments, commercial affiliation or unsupported navigation claims.
 
 Generated content is normalized into plain text. Complete sentences are sent
 to TTS as soon as they arrive, while the full answer is retained for ROS
@@ -155,19 +155,19 @@ network failures are retried three times.
 
 ## RAG example for a presentation
 
-If the passenger asks, “How can I install PickMe?”:
+If the passenger asks, “Where can I find the washroom?”:
 
 1. Silero captures the utterance through its natural end.
 2. faster-whisper produces the text locally.
 3. Gemini Embeddings creates the query vector.
-4. FAISS returns the top three installation-related chunks.
+4. FAISS returns the top three wayfinding-related chunks.
 5. The direct RAG prompt combines those facts with the language, name, and
    short session history.
 6. Gemini produces one brief answer and streams complete sentences.
 7. ROS publishes the plain-text answer while friendly Edge TTS speaks it.
 
 RAG is important because the spoken answer is grounded in the project's
-maintained PickMe documents rather than relying only on the language model's
+maintained airport assistance documents rather than relying only on the language model's
 general knowledge.
 
 ## ROS 2 interfaces
@@ -225,7 +225,8 @@ Use a valid key from the environment; never place a real key in documentation
 or source control.
 
 ```bash
-cd ~/Desktop/Unitree_G1/g1-ros2-workspace
+cd ~/Desktop/Rafi_Unitree_sem_Project/Unitree_G1_EDU_Robot_recovered/g1-ros2-workspace
+source /opt/ros/humble/setup.bash
 source install/setup.bash
 export GOOGLE_API_KEY="<your-google-api-key>"
 
@@ -247,7 +248,8 @@ After building the workspace, launch the MuJoCo bridge and ONNX controller in
 one terminal:
 
 ```bash
-cd ~/Desktop/Unitree_G1/g1-ros2-workspace
+cd ~/Desktop/Rafi_Unitree_sem_Project/Unitree_G1_EDU_Robot_recovered/g1-ros2-workspace
+source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch g1_mujoco sim.launch.py
 ```
@@ -285,8 +287,31 @@ position target on `g1/joint_cmd`.
 passenger's name and asks for their language. Silero neural VAD records exactly
 until the passenger stops, and faster-whisper transcribes the audio locally.
 For every question, our deterministic RAG pipeline retrieves the three most
-relevant PickMe facts from a local FAISS index and makes one short Gemini call.
+relevant airport assistance facts from a local FAISS index and makes one short Gemini call.
 Gemini's answer streams sentence by sentence while the next friendly voice
 clip is generated in parallel. ROS topics expose the text, state, response,
 and gesture, while timing logs, caches, fallbacks, and per-passenger cleanup
 keep the demonstration observable and reliable.”
+
+## Airport passenger assistance scope
+
+The maintained knowledge files describe airport wayfinding, passenger journeys,
+airport services and robot capabilities. They are generic prototype content,
+not a verified layout for a real airport. Add confirmed terminal/floor/route
+information before giving exact directions. Live flight/gate changes require
+official displays or staff. The robot does not claim commercial sponsorship or
+an official airport deployment.
+
+The voice RAG node provides spoken help. Saved maps, RViz-style initial pose,
+JSON destination labels and Nav2 goals belong to the separate navigation
+console. The voice node does not currently read those labels or start escort
+navigation. The airport FAISS cache is separate from previous indexes and
+automatically rebuilds when the knowledge file content changes. Restart the
+conversation process to discard old session history and its in-memory index.
+
+Run the conversation node with the Python environment containing the dependencies
+listed in `src/g1_conversation/requirements.txt`. The recovered workspace's
+simulation-only `.venv` currently lacks LangChain; use your configured RAG
+environment or install those requirements in a separate RAG environment. The
+content/retrieval tests were run offline in a temporary environment, with live
+Gemini tests skipped. No audio recording or live LLM response was tested.

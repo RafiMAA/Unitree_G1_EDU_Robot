@@ -68,7 +68,7 @@ def test_session_replacement():
         ("I'm happy to be here", None),
         ("This is my first time here", None),
         ("Call me when the taxi arrives", None),
-        ("My favorite app is PickMe", None),
+        ("My favorite place is the airport", None),
         ("My name is", None),
         ("My name is John and I need a ride", None),
         ("My name is 1234", None),
@@ -82,13 +82,12 @@ def test_extract_passenger_name(utterance, expected):
     assert extract_passenger_name(utterance) == expected
 
 
-def test_pickme_onboarding_introduction_uses_name_and_language():
-    from g1_conversation.onboarding import get_pickme_introduction
+def test_airport_onboarding_introduction_uses_name_and_language():
+    from g1_conversation.onboarding import get_airport_introduction
 
-    introduction = get_pickme_introduction("si", "Abdul")
+    introduction = get_airport_introduction("si", "Abdul")
     assert "Abdul" in introduction
-    assert "PickMe" in introduction
-    assert "ශ්‍රී ලංකාවේ" in introduction
+    assert "ගුවන්තොටුපළේ" in introduction
 
 
 def test_prompts():
@@ -101,7 +100,7 @@ def test_prompts():
 
     # English prompt should contain key instructions
     en_prompt = get_system_prompt("en")
-    assert "PickMe" in en_prompt
+    assert "airport" in en_prompt.lower()
     assert "concierge" in en_prompt.lower() or "assistant" in en_prompt.lower()
 
     # French prompt should be in French
@@ -119,7 +118,7 @@ def test_prompts():
     assert not is_language_supported("xx")
 
     # Greeting should exist
-    assert "PickMe" in INITIAL_GREETING
+    assert "airport assistant" in INITIAL_GREETING
 
 
 @pytest.mark.parametrize(
@@ -161,15 +160,15 @@ def test_document_loader():
 
     # Check all 4 knowledge base files are loaded
     sources = set(doc.metadata["source"] for doc in docs)
-    assert "pickme_services.md" in sources
-    assert "sri_lanka_locations.md" in sources
-    assert "app_installation.md" in sources
+    assert "airport_services.md" in sources
+    assert "airport_wayfinding.md" in sources
+    assert "passenger_journey.md" in sources
     assert "robot_concierge.md" in sources
 
     knowledge_text = "\n".join(doc.page_content for doc in docs).lower()
-    assert "yellow" in knowledge_text
-    assert "black passenger figure" in knowledge_text
-    assert "green logo" not in knowledge_text
+    assert "washroom" in knowledge_text
+    assert "baggage claim" in knowledge_text
+    assert "verified" in knowledge_text
 
 
 @pytest.mark.skipif(
@@ -193,10 +192,10 @@ def test_agent_basic_conversation():
     from g1_conversation.agent.rag_agent import create_agent, invoke_agent
 
     agent = create_agent(lang_code="en", verbose=False)
-    response = invoke_agent(agent, "What is PickMe?")
+    response = invoke_agent(agent, "What airport places can you help me find?")
 
     assert len(response) > 0
-    assert "pickme" in response.lower() or "ride" in response.lower()
+    assert any(word in response.lower() for word in ("airport", "gate", "washroom", "baggage"))
 
 
 def test_faiss_cache_fingerprint():
@@ -248,10 +247,10 @@ def test_direct_rag_uses_one_retrieval_and_one_llm_call():
 
         def invoke(self, _query):
             self.calls += 1
-            return [Document(page_content="PickMe offers cars.", metadata={})]
+            return [Document(page_content="I can help you find airport facilities.", metadata={})]
 
     class FakeResponse:
-        content = "PickMe offers cars."
+        content = "I can help you find airport facilities."
 
     class FakeLLM:
         calls = 0
@@ -264,7 +263,7 @@ def test_direct_rag_uses_one_retrieval_and_one_llm_call():
     llm = FakeLLM()
     agent = DirectRAGAgent("en", llm, retriever)
 
-    assert invoke_agent(agent, "What does PickMe offer?") == "PickMe offers cars."
+    assert invoke_agent(agent, "What can you help me find?") == "I can help you find airport facilities."
     assert retriever.calls == 1
     assert llm.calls == 1
 
@@ -313,7 +312,7 @@ def test_tts_combines_short_sentences_into_one_natural_utterance():
 def test_tts_splits_long_text_without_losing_words():
     from g1_conversation.tts_engine import TTSEngine
 
-    text = " ".join(["PickMe makes travel simple."] * 15)
+    text = " ".join(["The airport assistant helps passengers."] * 15)
     chunks = TTSEngine._chunk_text(text, max_characters=80)
 
     assert len(chunks) > 1
@@ -409,7 +408,7 @@ def test_text_mode_harness():
     session_mgr = SessionManager()
 
     print("\n" + "=" * 60)
-    print("  PickMe Robotic Mobility Concierge — Text Harness")
+    print("  Airport Passenger Assistant — Text Harness")
     print("=" * 60)
     print(f"\n{INITIAL_GREETING}\n")
 

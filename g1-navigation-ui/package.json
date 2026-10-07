@@ -7,7 +7,8 @@
     "dev": "bash scripts/start-console.sh",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "ui": "vite"
+    "ui": "vite",
+    "phone:setup": "python3 scripts/phone-setup.py"
   },
   "dependencies": {
     "vite": "7.1.9",

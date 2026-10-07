@@ -56,3 +56,5 @@ Makefile
 /MUJOCO_LOG.TXT
 /screenshot*.png
 /terminal_cmnds.txt
+
+/.rag-venv/

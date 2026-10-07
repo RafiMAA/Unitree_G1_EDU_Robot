@@ -7,18 +7,18 @@ import unicodedata
 LANGUAGE_QUESTION = "Nice to meet you, {name}. Which language do you prefer?"
 NAME_RETRY = "Sorry, I did not catch your name. What is your name?"
 
-PICKME_INTRODUCTIONS = {
-    "en": "Great, {name}. PickMe is Sri Lanka's leading ride-hailing app. I can explain its services and help you install it.",
-    "fr": "Très bien, {name}. PickMe est la principale application de transport au Sri Lanka. Je peux présenter ses services et vous aider à l'installer.",
-    "de": "Sehr gut, {name}. PickMe ist Sri Lankas führende Fahrdienst-App. Ich kann die Dienste erklären und bei der Installation helfen.",
-    "es": "Muy bien, {name}. PickMe es la principal aplicación de transporte de Sri Lanka. Puedo explicar sus servicios y ayudarle a instalarla.",
-    "ru": "Отлично, {name}. PickMe — ведущее приложение для поездок в Шри-Ланке. Я расскажу об услугах и помогу установить приложение.",
-    "ja": "承知しました、{name}さん。PickMeはスリランカを代表する配車アプリです。サービスの説明とアプリのインストールをお手伝いします。",
-    "zh": "好的，{name}。PickMe 是斯里兰卡领先的叫车应用。我可以介绍服务并帮助您安装应用。",
-    "ko": "좋습니다, {name}님. PickMe는 스리랑카의 대표 차량 호출 앱입니다. 서비스 안내와 앱 설치를 도와드리겠습니다.",
-    "hi": "बहुत अच्छा, {name}। PickMe श्रीलंका का प्रमुख राइड-हेलिंग ऐप है। मैं इसकी सेवाएँ समझाने और ऐप इंस्टॉल करने में मदद कर सकता हूँ।",
-    "si": "හොඳයි, {name}. PickMe ශ්‍රී ලංකාවේ ප්‍රමුඛ ගමන් සේවා ඇප් එකයි. එහි සේවාවන් ගැන කියා දී ඇප් එක ස්ථාපනය කිරීමට මට උදව් කළ හැකියි.",
-    "ta": "சரி, {name}. PickMe இலங்கையின் முன்னணி பயணச் சேவை செயலி. அதன் சேவைகளை விளக்கி, செயலியை நிறுவ நான் உதவ முடியும்.",
+AIRPORT_INTRODUCTIONS = {
+    'en': 'Nice to meet you, {name}. I can help you find boarding gates, washrooms, baggage claim and other places in the airport. Where would you like to go?',
+    'fr': "Enchanté, {name}. Je peux vous aider à trouver les portes d'embarquement, les toilettes et les autres services de l'aéroport. Où souhaitez-vous aller ?",
+    'de': 'Schön, Sie kennenzulernen, {name}. Ich helfe Ihnen, Flugsteige, Toiletten und andere Einrichtungen im Flughafen zu finden. Wohin möchten Sie gehen?',
+    'es': 'Mucho gusto, {name}. Puedo ayudarle a encontrar puertas de embarque, baños y otros servicios del aeropuerto. ¿Adónde desea ir?',
+    'ru': 'Приятно познакомиться, {name}. Я помогу найти выходы на посадку, туалеты и другие службы аэропорта. Куда вы хотите пройти?',
+    'ja': '{name}さん、よろしくお願いします。搭乗口、お手洗い、空港内の施設を探すお手伝いをします。どちらへ行きたいですか？',
+    'zh': '很高兴认识您，{name}。我可以帮您寻找登机口、洗手间和机场内的其他设施。您想去哪里？',
+    'ko': '만나서 반갑습니다, {name}님. 탑승구, 화장실 및 공항 내 시설을 찾는 것을 도와드릴 수 있습니다. 어디로 가시겠습니까?',
+    'hi': 'आपसे मिलकर खुशी हुई, {name}। मैं हवाई अड्डे में बोर्डिंग गेट, शौचालय और अन्य सुविधाएँ खोजने में आपकी मदद कर सकता हूँ। आप कहाँ जाना चाहते हैं?',
+    'si': 'ඔබ හමුවීම සතුටක්, {name}. ගුවන්තොටුපළේ ගුවන් යානයට පිවිසෙන දොරටු, වැසිකිළි සහ අනෙකුත් සේවා සොයා ගැනීමට මට උදව් කළ හැකියි. ඔබට යන්න අවශ්\u200dය කොහෙටද?',
+    'ta': 'உங்களைச் சந்திப்பதில் மகிழ்ச்சி, {name}. விமான நிலையத்தில் ஏறும் வாயில்கள், கழிப்பறைகள் மற்றும் பிற வசதிகளைக் கண்டறிய உதவ முடியும். நீங்கள் எங்கு செல்ல விரும்புகிறீர்கள்?',
 }
 
 _GREETING_PREFIX = r"(?:(?:hi|hello|hey)(?:\s+there)?[\s,!.:-]+)?"
@@ -111,6 +111,6 @@ def extract_passenger_name(text: str) -> str | None:
     return _validated_name(cleaned, "bare", cleaned)
 
 
-def get_pickme_introduction(lang_code: str, name: str) -> str:
-    template = PICKME_INTRODUCTIONS.get(lang_code, PICKME_INTRODUCTIONS["en"])
+def get_airport_introduction(lang_code: str, name: str) -> str:
+    template = AIRPORT_INTRODUCTIONS.get(lang_code, AIRPORT_INTRODUCTIONS["en"])
     return template.format(name=name)

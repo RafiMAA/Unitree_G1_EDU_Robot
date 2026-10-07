@@ -1,12 +1,12 @@
-"""FAISS vector store for the PickMe RAG knowledge base.
+"""FAISS vector store for the airport passenger assistance RAG knowledge base.
 
 Builds an in-memory FAISS index from the knowledge base documents
 using Google Gemini embeddings.  Persists the index to a stable
-location (``~/.g1_conversation/faiss_index/``) so it survives
+location (``~/.g1_conversation/airport_faiss_index/``) so it survives
 ``colcon build`` and doesn't re-embed on every node startup.
 
 The index is automatically rebuilt when any knowledge base file has
-been modified since the last build (staleness check via mtime).
+been modified since the last build (staleness check via content fingerprint).
 """
 
 import hashlib
@@ -22,7 +22,7 @@ from .document_loader import load_knowledge_base, DEFAULT_KB_PATH
 
 # Stable cache location — survives colcon build, unlike install/
 DEFAULT_INDEX_DIR = os.path.join(
-    os.path.expanduser("~"), ".g1_conversation", "faiss_index"
+    os.path.expanduser("~"), ".g1_conversation", "airport_faiss_index"
 )
 _MANIFEST_FILENAME = "_manifest.json"
 
@@ -30,7 +30,7 @@ _MANIFEST_FILENAME = "_manifest.json"
 def _kb_fingerprint(kb_path: str) -> str:
     """Compute a fingerprint of the knowledge base content.
 
-    Combines the mtime and size of every .md file into a single hash.
+    Combines the filename and content of every .md file into a single hash.
     If any file is added, removed, or modified the fingerprint changes
     and the index will be rebuilt.
     """
@@ -39,8 +39,9 @@ def _kb_fingerprint(kb_path: str) -> str:
     md_files = sorted(_glob.glob(os.path.join(kb_path, "*.md")))
     hasher = hashlib.sha256()
     for fpath in md_files:
-        stat = os.stat(fpath)
-        hasher.update(f"{fpath}:{stat.st_mtime_ns}:{stat.st_size}".encode())
+        hasher.update(os.path.basename(fpath).encode())
+        with open(fpath, "rb") as source:
+            hasher.update(source.read())
     return hasher.hexdigest()
 
 
@@ -86,7 +87,7 @@ def build_vectorstore(
         Path to the knowledge base markdown files.
     index_dir : str, optional
         Directory to persist/load the FAISS index.
-        Defaults to ``~/.g1_conversation/faiss_index/``.
+        Defaults to ``~/.g1_conversation/airport_faiss_index/``.
     force_rebuild : bool
         If True, rebuild even if a valid cached index exists.
 

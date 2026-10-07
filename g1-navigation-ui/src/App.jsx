@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import RagPanel from "./RagPanel.jsx";
 import MapView from "./MapView.jsx";
 import { freeMapCell } from "./mapGeometry.js";
 import LabelsPanel from "./LabelsPanel.jsx";
@@ -7,7 +8,7 @@ import useConsoleSession from "./useConsoleSession.js";
 import MapSessionPanel from "./MapSessionPanel.jsx";
 import { initialPoseMessage } from "./initialPose.js";
 
-const ROSBRIDGE_URL = import.meta.env.VITE_ROSBRIDGE_URL || "ws://localhost:9090";
+const ROSBRIDGE_URL = import.meta.env.VITE_ROSBRIDGE_URL || `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/rosbridge`;
 // Speed defaults match terminal teleop_keyboard.py (lin=0.2, ang=0.3).
 // Limits match the RL policy's trained command ranges from deploy.yaml:
 //   lin_vel_x: [-0.5, 1.0], lin_vel_y: [-0.5, 0.5], ang_vel_z: [-1.0, 1.0]
@@ -41,11 +42,10 @@ function nowStamp() {
 export default function App() {
   const socketRef = useRef(null);
   const reconnectRef = useRef(null);
-  const modeRef = useRef("mapping");
-  const mapNameRef = useRef("g1_map");
+  const modeRef = useRef("idle");
   const [connected, setConnected] = useState(false);
-  const [mode, setMode] = useState("mapping");
-  const [activeTab, setActiveTab] = useState("mapping");
+  const [mode, setMode] = useState("idle");
+  const [activeTab, setActiveTab] = useState(null);
   const [estop, setEstop] = useState(false);
   const [linearSpeed, setLinearSpeed] = useState(DEFAULT_LINEAR_SPEED);
   const [angularSpeed, setAngularSpeed] = useState(DEFAULT_ANGULAR_SPEED);
@@ -60,6 +60,7 @@ export default function App() {
   const [path, setPath] = useState([]);
   const [status, setStatus] = useState({ state: "offline", message: "Connecting to ROS…" });
   const [mapName, setMapName] = useState("g1_map");
+  const [mapSaving, setMapSaving] = useState(false);
   const consoleSession = useConsoleSession();
   const session = consoleSession.session;
   const [posePicking, setPosePicking] = useState(false);
@@ -68,6 +69,7 @@ export default function App() {
   const switchingRef = useRef(false);
   switchingRef.current = switching;
   const sessionKeyRef = useRef(null);
+  const sessionTabRef = useRef(null);
   const [labelPicking, setLabelPicking] = useState(false);
   const [labelDraft, setLabelDraft] = useState(null);
   const labelEditingRef = useRef(false);
@@ -85,7 +87,7 @@ export default function App() {
     (topic, msg) => send({ op: "publish", topic, msg }),
     [send],
   );
-  const labelStore = useMapLabels({ connected, publish, mapName });
+  const labelStore = useMapLabels({ connected: connected && Boolean(session?.labels_ready) && !switching, publish, mapName });
   const onLabelMessage = labelStore.onMessage;
 
   const advertise = useCallback(() => {
@@ -112,10 +114,6 @@ export default function App() {
   useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
-
-  useEffect(() => {
-    mapNameRef.current = mapName;
-  }, [mapName]);
 
   useEffect(() => {
     let disposed = false;
@@ -145,15 +143,9 @@ export default function App() {
             setStatus({ state: "info", message: packet.msg.data });
           }
         }
-        if (packet.topic === "/collision_monitor_state" && packet.msg.action_type > 0) {
+        if (modeRef.current === "navigate" && packet.topic === "/collision_monitor_state" && packet.msg.action_type > 0) {
           const action = ["clear", "stop", "slowdown", "approach", "limit"][packet.msg.action_type];
-          setStatus({ state: action, message: action === "stop" ? "Obstacle nearby: use Mapping controls to move away slowly" : `Safety ${action}: ${packet.msg.polygon_name}` });
-        }
-        if (packet.op === "service_response" && packet.id === "save-map") {
-          setStatus({
-            state: packet.result && packet.values?.result === 0 ? "saved" : "failed",
-            message: packet.result && packet.values?.result === 0 ? `Map saved as ${mapNameRef.current}` : "Map save failed: check the SLAM map and output path",
-          });
+          setStatus({ state: action, message: action === "stop" ? "Navigation paused: obstacle inside the collision zone" : `Safety ${action}: ${packet.msg.polygon_name}` });
         }
       };
       socket.onerror = () => socket.close();
@@ -340,16 +332,37 @@ export default function App() {
     } finally { setMapSwitching(false); }
   };
 
+  const selectTab = async tab => {
+    stopMotion();
+    publish(TOPICS.cancel[0], { data: true });
+    setControlMode("idle");
+    setMapSwitching(true);
+    try {
+      await consoleSession.request("/api/session", { tab });
+      setActiveTab(tab);
+      setControlMode(tab === "mapping" || tab === "navigate" ? tab : "idle");
+    } catch (error) {
+      setStatus({ state: "error", message: error.message });
+    } finally { setMapSwitching(false); }
+  };
+
   useEffect(() => {
     if (!session || session.transitioning) return;
     const key = `${session.mode}:${session.selected_map?.id || ""}`;
-    if (sessionKeyRef.current === key) return;
     const previousKey = sessionKeyRef.current;
-    sessionKeyRef.current = key;
-    setMap(null); setRobotPose(null); setPath([]); setGoal(null);
-    setControlMode(session.mode === "mapping" ? "mapping" : "idle");
-    if (session.selected_map) setMapName(session.selected_map.name);
-    else if (previousKey?.startsWith("localization:")) setMapName(`g1_map_${Date.now()}`);
+    const mapChanged = previousKey !== key;
+    if (mapChanged) {
+      sessionKeyRef.current = key;
+      setMap(null); setRobotPose(null); setPath([]); setGoal(null);
+      if (session.selected_map) setMapName(session.selected_map.name);
+      else if (previousKey?.startsWith("localization:")) setMapName(`g1_map_${Date.now()}`);
+    }
+    if (mapChanged || sessionTabRef.current !== session.tab) {
+      sessionTabRef.current = session.tab;
+      setActiveTab(session.tab);
+      setControlMode(session.tab === "mapping" || session.tab === "navigate" ? session.tab : "idle");
+    }
+    if (session.error) setStatus({ state: "error", message: session.error });
   }, [session, setControlMode]);
 
   const canPose = connected && Boolean(map) && session?.mode === "localization" && session.amcl_ready && !switching && !estop;
@@ -369,15 +382,16 @@ export default function App() {
     setStatus({ state: "localizing", message: "Initial pose sent. Wait for localization, then select Navigate." });
   };
 
-  const saveMap = () => {
-    send({
-      op: "call_service",
-      id: "save-map",
-      service: "/slam_toolbox/save_map",
-      type: "slam_toolbox/srv/SaveMap",
-      args: { name: { data: session ? `${session.maps_dir}/${labelStore.mapId}` : mapName } },
-    });
+  const saveMap = async () => {
+    if (mapSaving) return;
+    setMapSaving(true);
     setStatus({ state: "saving", message: `Saving ${mapName}…` });
+    try {
+      const result = await consoleSession.request("/api/maps/save", { name: labelStore.mapId });
+      setStatus({ state: "saved", message: `Saved ${result.name}. It is available in the saved-map list.` });
+    } catch (error) {
+      setStatus({ state: "error", message: error.message });
+    } finally { setMapSaving(false); }
   };
 
   const press = (key) => {
@@ -396,14 +410,16 @@ export default function App() {
       </header>
 
       <section className="modebar">
-        <button disabled={switching || session?.mode === "localization"} className={activeTab === "mapping" ? "active" : ""} onClick={() => setControlMode("mapping")}>01 · Mapping</button>
-        <button disabled={switching || (session?.mode === "localization" && (!session.localized || !session.navigation_ready || !session.safety_ready))} className={activeTab === "navigate" ? "active" : ""} onClick={() => setControlMode("navigate")}>02 · Navigate</button>
-        <button className={activeTab === "maps" ? "active" : ""} onClick={() => { setControlMode("idle"); setActiveTab("maps"); }}>03 · Maps & Locations</button>
+        <button disabled={switching} className={activeTab === "mapping" ? "active" : ""} onClick={() => selectTab("mapping")}>01 · Mapping</button>
+        <button disabled={switching} className={activeTab === "navigate" ? "active" : ""} onClick={() => selectTab("navigate")}>02 · Navigate</button>
+        <button disabled={switching} className={activeTab === "maps" ? "active" : ""} onClick={() => selectTab("maps")}>03 · Maps & Localization</button>
+        <button disabled={switching} className={activeTab === "rag" ? "active" : ""} onClick={() => selectTab("rag")}>04 · RAG Conversation</button>
         <button onClick={() => { publish(TOPICS.cancel[0], { data: true }); setControlMode("idle"); }}>Cancel / Idle</button>
         <button className={`estop ${estop ? "engaged" : ""}`} onClick={toggleEstop}>{estop ? "Release E-stop" : "Emergency stop"}</button>
       </section>
 
-      <section className="workspace">
+      {activeTab === "rag" && <RagPanel />}
+      <section className="workspace" hidden={activeTab === "rag"}>
         <div className="mapcard">
           <div className="cardhead"><span>LIVE OCCUPANCY MAP</span><span>{map ? `${map.info.width} × ${map.info.height} · ${map.info.resolution.toFixed(2)} m/cell` : "WAITING FOR /map"}</span></div>
           <MapView map={map} robotPose={robotPose} goal={goal} path={path}
@@ -464,8 +480,8 @@ export default function App() {
             </div>
           )}
           <div className="savecard">
-            <label htmlFor="map-name">MAP OUTPUT NAME OR PATH</label>
-            <div><input id="map-name" disabled={switching || session?.mode === "localization"} value={mapName} onChange={(event) => setMapName(event.target.value)} /><button disabled={!connected || switching || mode !== "mapping"} onClick={saveMap}>Save</button></div>
+            <label htmlFor="map-name">MAP NAME</label>
+            <div><input id="map-name" disabled={switching || session?.mode === "localization"} value={mapName} onChange={(event) => setMapName(event.target.value)} /><button disabled={!map || !session || switching || mapSaving || session.mode !== "mapping"} onClick={saveMap}>{mapSaving ? "Saving…" : "Save new map"}</button></div>
           </div>
           <div className="limits"><span>PLANAR FLOOR MODE</span><p>No stair, drop-off, hole or footstep-planning support. Keep a physical E-stop and safety operator present.</p></div>
         </aside>

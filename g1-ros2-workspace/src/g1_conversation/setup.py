@@ -39,7 +39,7 @@ setup(
     zip_safe=True,
     maintainer='abdul-rafi',
     maintainer_email='rafiabdul7128@gmail.com',
-    description='PickMe Robotic Mobility Concierge — RAG-powered conversational AI for the Unitree G1',
+    description='Airport Passenger Assistant — RAG-powered conversational AI for the Unitree G1',
     license='MIT',
     extras_require={
         'test': ['pytest'],

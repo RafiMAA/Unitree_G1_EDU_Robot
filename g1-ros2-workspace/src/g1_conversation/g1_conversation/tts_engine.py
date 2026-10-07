@@ -229,6 +229,7 @@ class TTSEngine:
         self,
         output_dir: Optional[str] = None,
         backend: str = "auto",
+        playback_enabled: bool = True,
     ) -> None:
         # Resolve backend preference
         if backend == "auto":
@@ -259,7 +260,7 @@ class TTSEngine:
                 f"Unknown TTS backend '{backend}'. Use 'auto', 'piper', or 'edge'."
             )
 
-        if not _PYGAME_AVAILABLE and not _SD_AVAILABLE:
+        if playback_enabled and not _PYGAME_AVAILABLE and not _SD_AVAILABLE:
             raise ImportError(
                 "An audio playback library is required. "
                 "Install pygame (pip install pygame) or sounddevice."
@@ -278,6 +279,17 @@ class TTSEngine:
         self._piper_lock = threading.Lock()
 
     # ── Public API (unchanged interface) ─────────────────────────────
+
+    def synthesize_bytes(self, text: str, lang_code: str = "en") -> tuple[bytes, str]:
+        """Return synthesized speech for a browser without local playback."""
+        profile = self.get_profile(lang_code)
+        with self._speak_lock:
+            prepared = self._prepare_audio(text, profile, cache=False)
+            try:
+                with open(prepared.path, "rb") as audio:
+                    return audio.read(), "audio/wav" if profile.backend == "piper" else "audio/mpeg"
+            finally:
+                self._remove_temporary(prepared)
 
     def get_voice(self, lang_code: str) -> str:
         """Look up the preferred neural voice for a language code."""

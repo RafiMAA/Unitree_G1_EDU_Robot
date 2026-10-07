@@ -1,1 +1,1 @@
-"""g1_conversation — PickMe Robotic Mobility Concierge for Unitree G1."""
+"""g1_conversation — Airport Passenger Assistant for Unitree G1."""

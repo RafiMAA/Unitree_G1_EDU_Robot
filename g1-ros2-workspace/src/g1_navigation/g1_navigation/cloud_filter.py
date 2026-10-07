@@ -18,11 +18,11 @@ def filter_navigation_points(
     points,
     min_height=0.10,
     max_height=2.0,
-    self_min_x=-0.38,
-    self_max_x=0.42,
-    self_half_width=0.36,
+    self_min_x=-0.29,
+    self_max_x=0.39,
+    self_half_width=0.33,
 ):
-    """Filter points already expressed in base_footprint coordinates."""
+    """Filter floor/self returns, leaving the compact collision margin visible."""
     height_ok = (points[:, 2] >= min_height) & (points[:, 2] <= max_height)
     inside_robot = (
         (points[:, 0] >= self_min_x)
@@ -48,10 +48,10 @@ class CloudFilter(Node):
         ).value
         self.min_height = float(self.declare_parameter('min_height', 0.10).value)
         self.max_height = float(self.declare_parameter('max_height', 2.0).value)
-        self.self_min_x = float(self.declare_parameter('self_min_x', -0.38).value)
-        self.self_max_x = float(self.declare_parameter('self_max_x', 0.42).value)
+        self.self_min_x = float(self.declare_parameter('self_min_x', -0.29).value)
+        self.self_max_x = float(self.declare_parameter('self_max_x', 0.39).value)
         self.self_half_width = float(
-            self.declare_parameter('self_half_width', 0.36).value
+            self.declare_parameter('self_half_width', 0.33).value
         )
 
         self.tf_buffer = Buffer(cache_time=Duration(seconds=10.0))

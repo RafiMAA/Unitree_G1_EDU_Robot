@@ -19,3 +19,8 @@ pnpm-debug.log*
 .DS_Store
 *.swp
 *~
+
+/.phone-tls/
+
+__pycache__/
+*.py[cod]

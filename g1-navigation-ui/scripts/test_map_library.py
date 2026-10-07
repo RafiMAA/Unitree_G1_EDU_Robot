@@ -56,6 +56,31 @@ class MapLibraryTests(unittest.TestCase):
         (self.root / 'earlier.yaml').write_text(yaml.safe_dump(document))
         self.assertEqual({m['name'] for m in self.library.maps()}, {'office', 'earlier'})
 
+    def test_save_live_grid_preserves_orientation_unknown_cells_and_row_order(self):
+        from types import SimpleNamespace as NS
+        import math
+        grid = NS(info=NS(width=3, height=2, resolution=.05,
+                          origin=NS(position=NS(x=-2., y=1.),
+                                    orientation=NS(x=0., y=0., z=math.sin(.15), w=math.cos(.15)))),
+                  data=[0, 100, -1, 100, -1, 0])
+        result = self.library.save_grid('live', grid)
+        document = yaml.safe_load(Path(result['id']).read_text())
+        self.assertAlmostEqual(document['origin'][2], .3)
+        self.assertEqual(document['origin'][:2], [-2., 1.])
+        with Image.open(self.library.directory / document['image']) as image:
+            self.assertEqual(image.size, (3, 2))
+            self.assertEqual(list(image.getdata()), [0, 205, 254, 254, 0, 205])
+        occupancy = (255 - 205) / 255
+        self.assertLess(document['free_thresh'], occupancy)
+        self.assertLess(occupancy, document['occupied_thresh'])
+        with self.assertRaises(ValueError):
+            self.library.save_grid('live', grid)
+
+    def test_incomplete_live_grid_is_not_saved(self):
+        from types import SimpleNamespace as NS
+        with self.assertRaisesRegex(ValueError, 'complete map'):
+            self.library.save_grid('bad', NS(info=NS(width=2, height=2), data=[0]))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="diagram-title diagram-desc">
-  <title id="diagram-title">Current Unitree G1 PickMe conversation architecture</title>
+  <title id="diagram-title">Current Unitree G1 airport assistance conversation architecture</title>
   <desc id="diagram-desc">Startup onboarding, neural speech processing, direct retrieval augmented generation, multilingual speech, ROS 2 motion integration, and privacy boundaries.</desc>
 
   <defs>
@@ -46,7 +46,7 @@
   <rect x="24" y="18" width="1872" height="91" rx="18" fill="#ffc629" filter="url(#shadow)"/>
   <circle cx="67" cy="54" r="16" fill="#111820"/>
   <path d="M50 77 C44 58, 41 48, 46 43 C51 39, 56 48, 61 57 C68 69, 78 73, 90 82" fill="none" stroke="#111820" stroke-width="13" stroke-linecap="round"/>
-  <text x="120" y="58" class="title">Unitree G1 · PickMe Conversation System</text>
+  <text x="120" y="58" class="title">Unitree G1 · Airport Passenger Assistant</text>
   <text x="122" y="84" class="subtitle">Current implementation: deterministic onboarding → local speech pipeline → direct RAG → multilingual reply + synchronized robot motion</text>
 
   <circle cx="1528" cy="48" r="6" fill="#267ca8"/>
@@ -87,7 +87,7 @@
   <text x="1260" y="232" text-anchor="middle" class="body">Auto-detect answer + language aliases</text>
   <text x="1260" y="255" text-anchor="middle" class="small">EN · FR · DE · ES · RU · JA · ZH</text>
   <text x="1260" y="277" text-anchor="middle" class="small">KO · HI · SI · TA</text>
-  <text x="1260" y="298" text-anchor="middle" class="small">Localized PickMe introduction follows</text>
+  <text x="1260" y="298" text-anchor="middle" class="small">Localized airport introduction follows</text>
 
   <rect x="1465" y="181" width="400" height="126" rx="13" class="session"/>
   <text x="1665" y="207" text-anchor="middle" class="head">5 · Active passenger session</text>
@@ -174,14 +174,14 @@
   <text x="1447" y="629" text-anchor="middle" class="tiny">0.5 s speaker echo guard → next turn</text>
 
   <!-- C. Knowledge and retrieval -->
-  <text x="42" y="687" class="section">C. Trusted PickMe knowledge preparation and runtime retrieval</text>
+  <text x="42" y="687" class="section">C. Trusted airport assistance knowledge preparation and runtime retrieval</text>
   <rect x="35" y="702" width="1850" height="183" rx="16" class="panel"/>
 
   <rect x="55" y="725" width="290" height="136" rx="13" class="session"/>
   <text x="200" y="751" text-anchor="middle" class="head">4 maintained Markdown files</text>
-  <text x="200" y="776" text-anchor="middle" class="body">Services · app installation</text>
-  <text x="200" y="798" text-anchor="middle" class="small">Sri Lanka locations · robot concierge</text>
-  <text x="200" y="821" text-anchor="middle" class="small">Current build: 45 document chunks</text>
+  <text x="200" y="776" text-anchor="middle" class="body">Services · wayfinding</text>
+  <text x="200" y="798" text-anchor="middle" class="small">Passenger journey · robot capabilities</text>
+  <text x="200" y="821" text-anchor="middle" class="small">Chunk count follows maintained content</text>
   <text x="200" y="843" text-anchor="middle" class="small">Source + section metadata retained</text>
 
   <rect x="390" y="725" width="240" height="136" rx="13" class="local"/>
@@ -201,9 +201,9 @@
   <rect x="1000" y="725" width="330" height="136" rx="13" class="local"/>
   <text x="1165" y="751" text-anchor="middle" class="head">Local FAISS vector index</text>
   <text x="1165" y="778" text-anchor="middle" class="body">Similarity search → top 3 chunks</text>
-  <text x="1165" y="803" text-anchor="middle" class="small">~/.g1_conversation/faiss_index</text>
+  <text x="1165" y="803" text-anchor="middle" class="small">~/.g1_conversation/airport_faiss_index</text>
   <text x="1165" y="826" text-anchor="middle" class="small">Index + manifest cached on disk</text>
-  <text x="1165" y="848" text-anchor="middle" class="small">Path / mtime / size fingerprint</text>
+  <text x="1165" y="848" text-anchor="middle" class="small">Filename / content fingerprint</text>
 
   <rect x="1375" y="725" width="470" height="136" rx="13" class="session"/>
   <text x="1610" y="751" text-anchor="middle" class="head">Grounded prompt assembled at runtime</text>

@@ -1,4 +1,4 @@
-"""Permit slow manual translation away from a stop-zone obstacle."""
+"""Bypass obstacles in manual mapping and guard monitored navigation output."""
 import json
 import math
 
@@ -158,27 +158,25 @@ class RetreatGuard(Node):
         if self.estop or self.mode not in ('mapping', 'navigate'):
             self.output.publish(output)
             return
-        if self.points is None or not self.fresh('points', now, self.timeout):
+        if self.mode == 'mapping':
+            # Manual mapping explicitly bypasses obstacle stopping. The mux
+            # still enforces emergency stop, idle mode and command timeouts.
+            if self.fresh('request', now, 0.3):
+                output = self.request
+                self.report('manual', 'Manual mapping: collision stopping disabled')
+            else:
+                self.report('stop', 'Waiting for a fresh manual command')
+        elif self.points is None or not self.fresh('points', now, self.timeout):
             self.report('stop', 'Waiting for fresh obstacle data; motion paused')
         elif not self.monitor_active or not self.fresh('request', now, 0.3):
             self.report('stop', 'Waiting for the collision monitor; motion paused')
-        elif np.count_nonzero((self.points[:, 0] >= -0.55) & (self.points[:, 0] <= 0.65)
-                              & (np.abs(self.points[:, 1]) <= 0.50)
-                              & (self.points[:, 2] >= 0.10) & (self.points[:, 2] <= 2.0)) > 4:
-            retreat = None
-            if self.mode == 'mapping':
-                retreat = retreat_velocity(self.points, self.request.linear.x, self.request.linear.y, self.request.angular.z)
-            if retreat is not None:
-                output.linear.x, output.linear.y = retreat
-                self.report('retreat', 'Moving away from obstacle slowly (maximum 0.10 m/s)')
-            else:
-                self.report('stop', self.retreat_hint() if self.mode == 'mapping' else 'Obstacle stop: select Mapping for manual retreat')
+        elif self.fresh('monitored', now, 0.3):
+            # Collision Monitor is the single owner of navigation geometry.
+            # Do not reapply a larger hard-coded polygon here.
+            output = self.monitored
+            self.report('ready', 'Navigation collision monitoring active')
         else:
-            if self.fresh('monitored', now, 0.3):
-                output = self.monitored
-                self.report('ready', 'Obstacle clearance restored' if self.last_status else 'Safety controls ready')
-            else:
-                self.report('stop', 'Waiting for the collision monitor; motion paused')
+            self.report('stop', 'Waiting for the collision monitor; motion paused')
         self.output.publish(output)
 
 

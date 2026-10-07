@@ -1,0 +1,9 @@
+# Independent browser conversation environment; no local audio device required.
+numpy>=1.25,<2
+langchain-google-genai>=4.0.0
+langchain-community>=0.3.0
+langchain-text-splitters>=0.3.0
+faiss-cpu>=1.7.4
+faster-whisper>=1.1.0
+edge-tts>=6.1.0
+python-dotenv>=1.0.0

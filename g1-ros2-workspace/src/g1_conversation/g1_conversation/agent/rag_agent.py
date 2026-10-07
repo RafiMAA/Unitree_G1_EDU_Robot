@@ -1,4 +1,4 @@
-"""Low-latency deterministic RAG for the PickMe concierge.
+"""Low-latency deterministic RAG for the airport passenger assistant.
 
 The previous implementation used a tool-calling AgentExecutor.  A factual
 question required one Gemini request to select the FAISS tool and a second
@@ -91,8 +91,6 @@ class DirectRAGAgent:
             "Answer directly; do not request or describe a tool call. "
             "Use at most two short sentences and about 45 spoken words. "
             "Give only the next useful step when explaining a procedure.\n\n"
-            "BRAND FACT: The official PickMe app logo has a yellow background "
-            "with a black passenger figure. Never describe it as green.\n\n"
             f"RETRIEVED KNOWLEDGE:\n{context}"
         )
         if self.passenger_name:

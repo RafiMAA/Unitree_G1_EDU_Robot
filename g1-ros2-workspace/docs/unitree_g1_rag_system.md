@@ -138,11 +138,11 @@ Passenger text
 Example:
 
 ``` text
-Audio: "How can I install PickMe?"
+Audio: "Where can I find the washroom?"
 
             ↓ Whisper
 
-Text:  "How can I install PickMe?"
+Text:  "Where can I find the washroom?"
 ```
 
 Whisper also supports multilingual speech recognition and language
@@ -180,14 +180,14 @@ This allows follow-up questions to make sense.
 For example:
 
 ``` text
-Passenger: How can I install PickMe?
+Passenger: Where can I find the washroom?
 Robot: ...
 
-Passenger: Is it available on iPhone?
+Passenger: Is there an accessible one?
 ```
 
-The chat history helps the system understand that **"it"** refers to the
-PickMe application.
+The chat history helps the system understand that **"one"** refers to the
+airport washroom.
 
 A new passenger should receive a new session so that previous passenger
 conversations are not mixed with the new conversation.
@@ -212,14 +212,14 @@ The LangChain agent acts as the **AI workflow controller**.
 For a general conversational question, the agent can send the
 appropriate context to Gemini.
 
-For a question requiring trusted PickMe information, the agent can use
+For a question requiring trusted airport assistance information, the agent can use
 the RAG retrieval tool before generating the final answer.
 
 Example:
 
 ``` text
 Passenger:
-"How do I install PickMe?"
+"How can I find baggage claim?"
 
         ↓
 
@@ -231,7 +231,7 @@ search_knowledge_base()
 
         ↓
 
-Relevant PickMe information
+Relevant airport assistance information
 
         ↓
 
@@ -277,7 +277,7 @@ Gemini
 Grounded answer
 ```
 
-For this project, RAG helps the robot answer using maintained PickMe
+For this project, RAG helps the robot answer using maintained airport assistance
 information.
 
 ------------------------------------------------------------------------
@@ -290,9 +290,9 @@ the robot is expected to know.
 Examples include information about:
 
 ``` text
-PickMe services
-App installation
-Sri Lankan locations
+Airport passenger services
+Passenger journey
+Airport wayfinding
 Robot capabilities
 ```
 
@@ -345,7 +345,7 @@ semantic meaning.
 Conceptually:
 
 ``` text
-"How do I install PickMe?"
+"How can I find baggage claim?"
 
             ↓
 
@@ -371,11 +371,11 @@ close in the embedding space.
 For example:
 
 ``` text
-"How do I download PickMe?"
+"Where is baggage claim?"
 
 and
 
-"Where can I install the PickMe app?"
+"Can you help me find baggage claim?"
 ```
 
 are semantically similar even though they do not use exactly the same
@@ -431,12 +431,12 @@ context.
 
 Suppose the passenger asks:
 
-> "How can I install PickMe?"
+> "Where can I find the washroom?"
 
 The retrieval process is:
 
 ``` text
-"How can I install PickMe?"
+"Where can I find the washroom?"
               │
               ▼
        Gemini Embeddings
@@ -461,7 +461,7 @@ Compare with knowledge-base vectors
 ```
 
 The retrieved information might contain instructions from the project's
-PickMe installation document.
+airport wayfinding document.
 
 Gemini can then create a natural-language answer using those facts.
 
@@ -502,7 +502,7 @@ RETRIEVED KNOWLEDGE:
 ...
 
 PASSENGER:
-How do I install PickMe?
+How can I find baggage claim?
 ```
 
 Gemini uses this context to produce a concise response.
@@ -760,3 +760,19 @@ Gemini     → generates the final answer
 Together, they allow the robot to give conversational answers grounded
 in the project's maintained knowledge instead of depending only on the
 LLM's general knowledge.
+
+## Airport passenger assistance scope
+
+The maintained knowledge files describe airport wayfinding, passenger journeys,
+airport services and robot capabilities. They are generic prototype content,
+not a verified layout for a real airport. Add confirmed terminal/floor/route
+information before giving exact directions. Live flight/gate changes require
+official displays or staff. The robot does not claim commercial sponsorship or
+an official airport deployment.
+
+The voice RAG node provides spoken help. Saved maps, RViz-style initial pose,
+JSON destination labels and Nav2 goals belong to the separate navigation
+console. The voice node does not currently read those labels or start escort
+navigation. The airport FAISS cache is separate from previous indexes and
+automatically rebuilds when the knowledge file content changes. Restart the
+conversation process to discard old session history and its in-memory index.

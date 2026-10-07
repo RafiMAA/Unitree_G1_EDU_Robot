@@ -1,6 +1,6 @@
 # Unitree G1 EDU Robot
 
-Software stack for the Unitree G1 EDU humanoid, built as a university capstone project in collaboration with **PickMe** (Sri Lanka's ride-hailing platform). The repository spans three layers: low-level RL locomotion control in simulation, 2D/3D mapping and Nav2-based navigation, and a voice-driven RAG conversational agent that lets the G1 act as an airport mobility concierge.
+Software stack for the Unitree G1 EDU humanoid, built as a university capstone project for airport passenger assistance. The repository spans three layers: low-level RL locomotion control in simulation, 2D/3D mapping and Nav2-based navigation, and a voice-driven RAG conversational agent that lets the G1 act as an airport mobility concierge.
 
 <p align="center">
   <img src="images/unitree_g1_architecture.png" alt="Unitree G1 Communication Architecture" width="800">
@@ -10,8 +10,9 @@ See [`Robot_Architecture.md`](Robot_Architecture.md) for a full breakdown of how
 
 ## Run the complete navigation console
 
-After the ROS workspace has been built, one command starts the simulator,
-perception, SLAM/Nav2, label JSON storage, velocity safety controls and React UI:
+After the ROS workspace has been built, start simulation separately using the
+[console guide](g1-navigation-ui/README.md). This command starts the React UI,
+local process manager and rosbridge; each tab starts its own ROS services:
 
 ```bash
 source ~/.nvm/nvm.sh
@@ -20,7 +21,7 @@ cd g1-navigation-ui
 npm run dev
 ```
 
-Stop earlier simulation/mapping/UI launches first. Open `http://localhost:5173`.
+Stop earlier mapping/UI launches first; keep your separate simulator running. Open `http://localhost:5173`.
 The UI can import saved YAML/image map pairs, switch from SLAM to AMCL, and set
 an RViz-style initial pose by dragging an arrow. See the
 [console guide](g1-navigation-ui/README.md) for map loading, labels and setup.
@@ -35,26 +36,26 @@ an RViz-style initial pose by dragging an arrow. See the
 | Mapping | [`g1_mapping`](g1-ros2-workspace/src/g1_mapping) | Live voxelized 3D mapping and RViz visualization from LiDAR |
 | Navigation | [`g1_navigation`](g1-ros2-workspace/src/g1_navigation) | SLAM Toolbox + Nav2 integration, point cloud filtering, command arbitration, and a browser-based control gateway |
 | Web UI | [`g1-navigation-ui`](g1-navigation-ui) | React/Vite front end for driving, mapping, and sending navigation goals |
-| Conversational AI | [`g1_conversation`](g1-ros2-workspace/src/g1_conversation) | RAG-powered voice concierge that explains and helps install the PickMe app |
+| Conversational AI | [`g1_conversation`](g1-ros2-workspace/src/g1_conversation) | Multilingual RAG voice assistant for airport wayfinding and passenger services |
 
 Each package with its own operational quirks has a dedicated README — see [`g1_mapping/README.md`](g1-ros2-workspace/src/g1_mapping/README.md) and [`g1_navigation/README.md`](g1-ros2-workspace/src/g1_navigation/README.md) for detailed run instructions.
 
-## PickMe Robotic Mobility Concierge
+## Airport Passenger Assistant
 
-The flagship application (`g1_conversation`) turns the G1 into a passenger-facing concierge for airport pickups:
+The flagship application (`g1_conversation`) turns the G1 into a passenger-facing assistant for finding places and services within an airport:
 
 ```
 Mic → WebRTC VAD → Whisper STT → LangChain RAG Agent (Gemini + FAISS) → edge-tts → G1 Speaker
 ```
 
 - Detects speech with WebRTC VAD, transcribes it locally with Whisper (`faster-whisper` / `openai-whisper`).
-- Runs a LangChain agent grounded in a FAISS knowledge base (PickMe services, app installation steps, Sri Lanka location data) embedded via Gemini — answers stay within approved sources.
+- Runs a LangChain agent grounded in a FAISS knowledge base (airport wayfinding, passenger journeys and airport services) embedded via Gemini — answers stay within approved sources.
 - Replies with `edge-tts` synthesized speech played through the robot.
 - Handles multilingual onboarding (English, French, German, Spanish, Russian, Japanese, Chinese, Korean, Hindi, Sinhala, Tamil) and mid-conversation language switching.
 - Clears passenger name and session data as soon as a session ends — no PII persists between passengers.
 - Publishes intermediate state (transcriptions, agent responses, session events) as ROS2 topics for monitoring.
 
-Phase 1 scope is informational: the robot explains PickMe and helps a passenger install the app. Ride booking is not yet implemented.
+The voice agent provides grounded passenger information and spoken wayfinding assistance. The navigation console separately handles maps, initial pose, saved locations and physical navigation; the RAG agent does not yet send navigation goals. Exact airport routes require verified local layout data.
 
 ## Prerequisites
 
@@ -136,7 +137,7 @@ This repository targets simulation by default. Before running any package agains
     │   ├── g1_mujoco/            # MuJoCo <-> ROS2 bridge
     │   ├── g1_mapping/           # Live 3D voxel mapping
     │   ├── g1_navigation/        # SLAM, Nav2, web gateway
-    │   ├── g1_conversation/      # PickMe RAG voice concierge
+    │   ├── g1_conversation/      # Airport passenger RAG voice assistant
     │   └── unitree_mujoco/       # Submodule: Unitree's MuJoCo simulator
     └── unitree_rl_mjlab/         # Submodule: Unitree's RL training environment
 ```
@@ -147,4 +148,4 @@ Package-level licenses vary (MIT for `g1_conversation`, Apache-2.0 for `g1_mappi
 
 ## Acknowledgments
 
-Built on Unitree Robotics' G1 EDU platform and SDKs, ROS2 Jazzy, Nav2, SLAM Toolbox, LangChain, and Google Gemini. Developed as a 5th-semester university capstone project in partnership with PickMe.
+Built on Unitree Robotics' G1 EDU platform and SDKs, ROS2 Jazzy, Nav2, SLAM Toolbox, LangChain, and Google Gemini. Developed as a 5th-semester university capstone project for airport passenger assistance.
