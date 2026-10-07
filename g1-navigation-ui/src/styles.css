@@ -138,3 +138,17 @@ aside { display: flex; flex-direction: column; gap: 12px; }
 .ragpreferences input { accent-color: #3ce6a8; }
 .ragbody audio { width: 100%; max-width: 500px; }
 @media (max-width: 600px) { .ragsettings { grid-template-columns: 1fr; } .ragbody { padding: 14px; } .ragmessages { padding: 8px; } .ragmessages article { max-width: 95%; } }
+.livevoice { display: grid; justify-items: center; gap: 10px; padding: 24px 12px 10px; text-align: center; }
+.voiceorb { display: grid; place-items: center; width: 100px; height: 100px; border-radius: 50%; font-size: 54px; color: #3ce6a8; background: radial-gradient(circle, #215247, #08131d); border: 1px solid #294255; }
+.livevoice.running .voiceorb { box-shadow: 0 0 22px #3ce6a833; animation: voicepulse 2s ease-in-out infinite; }
+.livevoice.speaking .voiceorb { color: #52a8ff; box-shadow: 0 0 30px #52a8ff55; animation-duration: .7s; }
+.livevoice p { margin: 0; color: #8198a3; font-size: 13px; }
+.liveactions { justify-content: center; margin: 20px 0; }
+.livetranscript summary { cursor: pointer; color: #86a3af; }
+.livetranscript .ragmessages { min-height: 140px; max-height: 280px; }
+@keyframes voicepulse { 50% { transform: scale(1.05); } }
+@media (prefers-reduced-motion: reduce) { .livevoice.running .voiceorb { animation: none; } }
+
+.voice-navigation { margin-top: 18px; padding: 14px; border: 1px solid #294255; border-radius: 8px; font-size: 13px; line-height: 1.6; }
+.voice-navigation strong { color: #52a8ff; }
+.voice-navigation p { margin: 8px 0 0; }

@@ -13,6 +13,7 @@ export default defineConfig({
     port: Number(process.env.G1_UI_PORT || 5173),
     strictPort: true,
     proxy: {
+      "/api/rag/live": { target: `ws://127.0.0.1:${process.env.G1_RAG_LIVE_PORT || (Number(process.env.G1_RAG_PORT || 8767) + 1)}`, ws: true },
       "/api": `http://127.0.0.1:${process.env.G1_CONSOLE_PORT || 8765}`,
       "/rosbridge": { target: `ws://127.0.0.1:${process.env.G1_ROSBRIDGE_PORT || 9090}`, ws: true, rewrite: p => p.replace(/^\/rosbridge/, "") || "/" },
     },

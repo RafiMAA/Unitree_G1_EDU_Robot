@@ -106,6 +106,54 @@ class TabTests(unittest.TestCase):
         self.assertNotIn('rag', c.processes)
         self.assertIn('stack_nav', c.processes)
 
+    def spoken_setup(self):
+        from types import SimpleNamespace as NS
+        c = self.console
+        c.tab, c.mode = 'rag', 'localization'
+        c.selected = {'id': '/maps/airport.yaml', 'name': 'airport'}
+        c.localized = c.amcl_ready = c.navigation_ready = True
+        c.estop = False
+        c.readiness = {'collision_monitor': True, 'velocity_smoother': True}
+        label = {'id': 'office', 'text': 'Office', 'x': .5, 'y': .5, 'yaw': 1.0}
+        c.rag_context = Mock(return_value={'map_id': '/maps/airport.yaml', 'locations': [label]})
+        c.map = NS(info=NS(resolution=1., width=2, height=2, origin=NS(position=NS(x=0.,y=0.), orientation=NS(x=0.,y=0.,z=0.,w=1.))), data=[0,100,-1,0])
+        return c, {'map_id': '/maps/airport.yaml', 'location_id': 'office'}
+
+    def test_spoken_goal_uses_saved_coordinates_and_keeps_rag_running(self):
+        import rclpy.time
+        c, payload = self.spoken_setup()
+        c.processes['rag'] = object()
+        c.node, c.goal_pub = Mock(), Mock()
+        c.node.get_clock.return_value.now.return_value.to_msg.return_value = rclpy.time.Time().to_msg()
+        c.gateway_mode = 'navigate'
+        c.prepare_spoken_navigation(payload)
+        self.assertIn('rag', c.processes)
+        self.assertIn('stack_nav', c.processes)
+        self.assertIn('start_sim:=false', self.commands['stack_nav'])
+        result = c.send_spoken_goal(payload)
+        self.assertEqual(result['state'], 'submitted')
+        pose = c.goal_pub.publish.call_args.args[0]
+        self.assertEqual(pose.header.frame_id, 'map')
+        self.assertEqual(pose.pose.position.x, .5)
+        self.assertAlmostEqual(pose.pose.orientation.z, __import__('math').sin(.5))
+
+    def test_spoken_navigation_rejects_unlocalized_stale_or_blocked_goals(self):
+        c, payload = self.spoken_setup()
+        c.localized = False
+        with self.assertRaisesRegex(ValueError, 'initial pose'):
+            c.spoken_destination(payload)
+        c.localized = True
+        with self.assertRaisesRegex(ValueError, 'map changed'):
+            c.spoken_destination({**payload, 'map_id': 'other'})
+        with self.assertRaisesRegex(ValueError, 'not a saved'):
+            c.spoken_destination({**payload, 'location_id': 'hallucinated'})
+        c.map.data[0] = 100
+        with self.assertRaisesRegex(ValueError, 'free map'):
+            c.spoken_destination(payload)
+        c.estop = True
+        with self.assertRaisesRegex(ValueError, 'Emergency stop'):
+            c.spoken_destination(payload)
+
     def test_readiness_recovers_from_request_to_stopped_node(self):
         from types import SimpleNamespace as NS
         c = self.console

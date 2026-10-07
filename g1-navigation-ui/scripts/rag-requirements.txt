@@ -7,3 +7,11 @@ faiss-cpu>=1.7.4
 faster-whisper>=1.1.0
 edge-tts>=6.1.0
 python-dotenv>=1.0.0
+
+# Persistent Gemini Live audio relay
+google-genai>=2.28.0,<3
+websockets>=14,<17
+
+webrtcvad-wheels>=2.0.14
+
+rapidfuzz>=3.14,<4

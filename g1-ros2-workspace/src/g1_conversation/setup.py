@@ -26,6 +26,7 @@ setup(
         'langchain-google-genai',
         'langchain-community',
         'faiss-cpu',
+        'rapidfuzz>=3.14,<4',
         'openai-whisper',
         'faster-whisper',
         'edge-tts',

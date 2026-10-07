@@ -254,66 +254,78 @@ Select an imported/saved map, click **Load map**, then place the initial pose.
 **Continue mapping** returns to an existing SLAM session; **New mapping** starts
 SLAM when a saved map is loaded or no mapping session exists.
 
-## RAG Conversation tab
+## Continuous RAG conversation and spoken navigation
 
-Run the usual command, then select **04 · RAG Conversation**:
+The default conversation backend follows the project architecture:
+**phone/computer microphone → WebRTC VAD → faster-whisper STT → LangChain
+orchestration / FAISS retrieval → Gemini → TTS → browser speaker**.
+The UI remains a continuous **Start conversation / End conversation** interface;
+there are no record/send or typed-message controls. Speech pauses delimit turns.
+TTS sentences are returned as they are synthesized. Speaking again interrupts
+queued playback and suppresses stale results. This staged pipeline has STT/RAG/TTS
+latency; it is not native Gemini Live audio generation.
+
+The same Gemini call returns a spoken reply and structured navigation intent.
+Wayfinding requests such as “Take me to the office”, “Navigate to the office”,
+or “Where is the office?” resolve only to a saved
+location ID for the loaded map. The console reads that location's position and
+yaw from `<map>_labels.json`; the LLM never supplies coordinates. Location questions request guidance too; general facts, negated requests,
+quoted commands and opening-hours questions do not request movement. Unknown/ambiguous places are
+clarified, and missing localization/readiness or an emergency stop rejects
+motion. The existing Nav2 gateway and velocity/collision controls execute goals.
+Current navigation status is included when answering follow-up questions.
+
+Startup:
+
+1. Start simulation in its own terminal with `cmd_vel_topic:=/cmd_vel_safe`.
+2. Start `npm run dev` as usual; opening the UI does not start simulation.
+3. In **Maps & Localization**, load a saved map, place **2D Pose Estimate**, and
+   wait for localization. Mark/import destination labels and their headings.
+4. Open **RAG Conversation**, press **Start conversation**, and allow the mic.
+5. Ask airport questions or say “Take me to [saved destination]”. Nav2 and its
+   collision/velocity controls start automatically for that guidance request;
+   RAG remains running. “Stop navigation” cancels guidance. Ending the voice
+   session or leaving its tab cancels spoken guidance too.
+
+`GOOGLE_API_KEY` must be set in `g1-ros2-workspace/.env` or exported before
+starting the UI. Restart after changing it. It stays on the computer.
+Dependencies are prepared in the separate `.rag-venv` on first selection;
+the first Whisper utterance may download the configured model. FAISS reuses
+its airport index. Default Edge TTS and Gemini require internet. The microphone
+and playback are on the device displaying the UI; no computer audio hardware
+or separate `conversation_node` launch is needed.
+
+Environment options:
+
+- `G1_CONVERSATION_MODE=pipeline` (default) follows the staged architecture.
+  `gemini_live` keeps the optional native Live relay for experiments, with
+  audio sent to Google and airport retrieval via a tool; it does not implement
+  the staged STT/TTS or spoken navigation path.
+- `G1_STT_MODEL=base`, `G1_TTS_BACKEND=auto` (Edge in the prepared environment).
+- Optional native mode: `G1_LIVE_MODEL=gemini-3.8-live`, `G1_LIVE_VOICE=Kore`.
+- `G1_RAG_PYTHON`: an existing fully configured Python, bypassing installation.
+- `G1_RAG_ENV_FILE`: additional computer dotenv file.
+- `G1_RAG_PORT=8767`; `G1_RAG_LIVE_PORT` defaults to `G1_RAG_PORT + 1`.
+
+The `/api/rag/live` WebSocket streams PCM to the computer. The default staged
+backend processes microphone audio locally; only recognized text and retrieved
+context go to Gemini. Edge TTS receives reply text. API keys never enter the
+browser. One live device/session is supported at a time. Logs are in
+`g1-ros2-workspace/log/console/rag.log`. Phone microphones require the HTTPS
+setup below.
+
+Architecture and validation limits:
+[Browser voice and navigation](../g1-ros2-workspace/docs/browser_voice_navigation.md).
+
+Offline pipeline/relay checks after preparing `.rag-venv`:
 
 ```bash
-source ~/.nvm/nvm.sh
-nvm use 22
-cd ~/Desktop/Rafi_Unitree_sem_Project/Unitree_G1_EDU_Robot_recovered/g1-navigation-ui
-npm run dev
+PYTHONPATH="$PWD/../g1-ros2-workspace/src/g1_conversation" \
+  ../g1-ros2-workspace/.rag-venv/bin/python -m unittest discover -s scripts -p 'test_pipeline_rag.py'
+PYTHONPATH="$PWD/../g1-ros2-workspace/src/g1_conversation" \
+  ../g1-ros2-workspace/.rag-venv/bin/python -m unittest discover -s scripts -p 'test_live_rag.py'
+node --test src/liveAudio.test.js
 ```
-
-The conversation worker starts only when you select this tab and stops when you
-leave it. It does not start simulation, microphone capture on the computer,
-or computer speaker playback. Selecting RAG cancels navigation and pauses
-manual robot control; an existing map session is retained. Simulation stays in
-its own terminal. You do not need to launch `conversation_node` separately.
-
-Set `GOOGLE_API_KEY` in `g1-ros2-workspace/.env` on the computer (or export it
-before starting the UI). This file is ignored by Git. Restart the UI after
-changing the key. The browser never receives the key. Gemini/embeddings need
-an active key and internet access. The existing airport knowledge base and
-per-conversation history are reused; no robot navigation goal is sent by chat.
-
-On first selection, the console installs conversation dependencies into
-`g1-ros2-workspace/.rag-venv`, separate from the simulator `.venv`.
-System prerequisites are `python3-venv` and `ffmpeg`; for Ubuntu:
-
-```bash
-sudo apt install python3-venv ffmpeg
-```
-
-First voice use can also download a Whisper model. The prepared environment
-and model downloads are reused. Worker logs are in
-`g1-ros2-workspace/log/console/rag.log`.
-
-Choose a language, type a message or press **Record voice**. Allow microphone
-access, speak, and pause to send, or press **Stop & send recording**. Each
-recording is limited to 60 seconds/4 MB. The computer checks speech with the
-existing Silero VAD, transcribes with faster-whisper, answers with airport RAG,
-and returns TTS audio to this browser. Silence does not reach the LLM.
-**Speak replies on this device** controls speech output; the audio player is
-also available when mobile browsers prevent automatic playback. Clear stops
-local recording/playback and clears this session's history. A submitted cloud
-request may finish on the backend before a new turn is accepted.
-
-Audio goes through the same-origin HTTP API; ROS state, commands, and the
-`/g1/speech_text` and `/g1/agent_response` notifications use ROS/rosbridge.
-The RAG tab uses bounded replies rather than the local microphone node's
-continuous streaming conversation. Browser pause detection ends the recording;
-the server's neural VAD validates and trims it independently.
-
-Optional computer environment settings:
-
-- `G1_STT_MODEL`: Whisper model name, default `base`.
-- `G1_TTS_BACKEND`: `auto` (Edge in the prepared browser environment), `edge`,
-  or `piper` if separately installed with voice models.
-- `G1_RAG_PYTHON`: absolute path to an existing fully configured Python;
-  skips automatic environment preparation.
-- `G1_RAG_ENV_FILE`: an additional dotenv file on the computer.
-- `G1_RAG_PORT`: loopback worker port, default `8767`.
 
 ## Phone microphone and speaker
 
@@ -346,3 +358,15 @@ Run `phone:setup` again after the computer IP changes or certificates expire
 `.phone-tls` directory to return to localhost HTTP. For externally managed TLS,
 set `G1_TLS_KEY` and `G1_TLS_CERT`; set `G1_UI_ALLOWED_ORIGINS` to the exact
 HTTPS origin when using a host not listed in the generated certificates.
+
+### Understanding passenger destinations
+
+Gemini interprets intent and conversation context; RapidFuzz normalizes and
+matches the requested name to this map's saved locations, including common
+synonyms and small recognition errors. FAISS retrieves airport facts rather
+than choosing navigation coordinates. The resolver uses conservative string
+similarity and a gap between the top matches; those scores are not probabilities.
+Ambiguous names such as “washroom” with east/west washrooms require clarification.
+Gate/terminal/floor numbers must agree. No location outside the saved map catalog
+can become a navigation goal. Gemini resolves multilingual and contextual
+phrases such as “yes, take me there”; these still require a saved location.

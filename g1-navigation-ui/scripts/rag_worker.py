@@ -53,6 +53,7 @@ class Runtime:
         self.lock = threading.Lock()
         self.sessions = {}
         self.ready = False
+        self.live_ready = False
         self.error = ''
         self.stt = self.detector = self.tts = None
         self.stage = 'Preparing conversation'
@@ -75,9 +76,9 @@ class Runtime:
             print(self.error, flush=True)
 
     def status(self):
-        return {'ready': self.ready, 'configured': bool(os.environ.get('GOOGLE_API_KEY')),
+        return {'ready': self.ready and self.live_ready, 'live': True, 'pipeline': os.environ.get('G1_CONVERSATION_MODE', 'pipeline'), 'configured': bool(os.environ.get('GOOGLE_API_KEY')),
                 'stage': self.stage, 'error': self.error,
-                'microphone_available': bool(shutil.which('ffmpeg'))}
+                'microphone_available': True}
 
     def turn(self, payload):
         if not self.ready:
@@ -204,6 +205,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     runtime = Runtime()
+    from live_rag import start_live
+    threading.Thread(target=start_live, args=(runtime,), daemon=True).start()
     server = ThreadingHTTPServer(('127.0.0.1', PORT), Handler)
     server.runtime = runtime
     threading.Thread(target=runtime.initialize, daemon=True).start()

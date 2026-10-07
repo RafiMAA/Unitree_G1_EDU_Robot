@@ -1,192 +1,138 @@
 import React, { useEffect, useRef, useState } from "react";
+import { LiveAudio } from "./liveAudio.js";
 
 const LANGUAGES = { en: "English", fr: "Français", de: "Deutsch", es: "Español", ru: "Русский", ja: "日本語", zh: "中文", ko: "한국어", hi: "हिंदी", si: "සිංහල", ta: "தமிழ்" };
-const base64 = blob => new Promise((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = () => resolve(reader.result.split(",")[1]);
-  reader.onerror = () => reject(new Error("Unable to read microphone recording"));
-  reader.readAsDataURL(blob);
-});
-const audioUrl = audio => {
-  const bytes = Uint8Array.from(atob(audio.data), char => char.charCodeAt(0));
-  return URL.createObjectURL(new Blob([bytes], { type: audio.mime }));
-};
 
-const closeContext = ref => { const current = ref.current; ref.current = null; current?.close().catch(() => {}); };
-const newSession = () => crypto.randomUUID?.() || Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
-
-export default function RagPanel() {
+export default function RagPanel({ navigationStatus }) {
   const [backend, setBackend] = useState(null);
+  const [mapContext, setMapContext] = useState(null);
+  const [navigation, setNavigation] = useState(null);
   const [messages, setMessages] = useState([]);
-  const [text, setText] = useState("");
   const [name, setName] = useState("");
   const [language, setLanguage] = useState("en");
-  const [recording, setRecording] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [speak, setSpeak] = useState(true);
-  const [autoSend, setAutoSend] = useState(true);
+  const [phase, setPhase] = useState("idle");
+  const [speaking, setSpeaking] = useState(false);
+  const [muted, setMuted] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [replyAudio, setReplyAudio] = useState("");
-  const session = useRef(newSession());
-  const epoch = useRef(0), mounted = useRef(true), controller = useRef(null);
-  const recorder = useRef(null), stream = useRef(null), context = useRef(null), meter = useRef(null), urls = useRef([]);
-  const player = useRef(null), sendRef = useRef(null), log = useRef(null);
-  const microphoneSupported = window.isSecureContext && Boolean(navigator.mediaDevices?.getUserMedia) && Boolean(window.MediaRecorder);
+  const mounted = useRef(false), generation = useRef(0), socket = useRef(null), audio = useRef(null), log = useRef(null), timeout = useRef(null), active = useRef(false);
+  const supported = window.isSecureContext && Boolean(navigator.mediaDevices?.getUserMedia) && Boolean(window.AudioWorkletNode);
   const ready = backend?.ready && backend?.configured;
+  const running = phase !== "idle";
+
+  const end = (message = "") => {
+    active.current = false; generation.current += 1; clearTimeout(timeout.current);
+    const ws = socket.current; socket.current = null;
+    if (ws) { ws.onclose = ws.onerror = ws.onmessage = null; ws.close(); }
+    const capture = audio.current; audio.current = null; capture?.close();
+    if (mounted.current) { setPhase("idle"); setSpeaking(false); setMuted(false); if (message) setError(message); }
+  };
 
   useEffect(() => {
-    mounted.current = true;
+    mounted.current = true; let disposed = false;
     const poll = async () => {
       try {
-        const response = await fetch("/api/rag/status");
-        if (!response.ok) throw new Error("Conversation backend unavailable");
-        const state = await response.json();
-        if (mounted.current) setBackend(state);
-      } catch { if (mounted.current) setBackend({ error: "Conversation backend unavailable. Restart the UI or reopen this tab." }); }
+        const result = await fetch("/api/rag/status");
+        if (!result.ok) throw new Error();
+        const status = await result.json();
+        if (!disposed) setBackend(status);
+        const map = await fetch("/api/rag/context");
+        if (map.ok && !disposed) setMapContext(await map.json());
+      } catch { if (!disposed) setBackend({ error: "Conversation backend unavailable. Reopen this tab to retry." }); }
     };
     poll(); const timer = setInterval(poll, 1500);
-    return () => {
-      mounted.current = false; epoch.current += 1; clearInterval(timer);
-      controller.current?.abort();
-      if (meter.current) clearInterval(meter.current);
-      if (recorder.current?.state === "recording") { recorder.current.onstop = null; recorder.current.stop(); }
-      stream.current?.getTracks().forEach(track => track.stop());
-      closeContext(context); player.current?.pause();
-      urls.current.forEach(URL.revokeObjectURL);
-      fetch("/api/rag/end", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: session.current }), keepalive: true }).catch(() => {});
-    };
+    return () => { disposed = true; mounted.current = false; clearInterval(timer); end(); };
   }, []);
-
   useEffect(() => { if (log.current) log.current.scrollTop = log.current.scrollHeight; }, [messages]);
 
-  const sendTurn = async values => {
-    if (busy || !ready) return;
-    const turn = epoch.current;
-    const abort = new AbortController(); controller.current = abort;
-    const timeout = setTimeout(() => abort.abort(), 185000);
-    setBusy(true); setError(""); setNotice("");
-    player.current?.pause();
+  const start = async () => {
+    if (!ready || !supported || active.current) return;
+    active.current = true; const turn = ++generation.current;
+    setError(""); setMessages([]); setNavigation(null); setPhase("Connecting"); setMuted(false);
     try {
-      const response = await fetch("/api/rag/turn", { method: "POST", headers: { "Content-Type": "application/json" }, signal: abort.signal,
-        body: JSON.stringify({ session_id: session.current, name: name.trim(), language, speak, ...values }) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Conversation request failed");
-      if (!mounted.current || turn !== epoch.current) return;
-      setMessages(previous => [...previous, { role: "You", text: result.transcript }, { role: "Airport assistant", text: result.answer }].slice(-40));
-      if (result.audio) {
-        const url = audioUrl(result.audio); urls.current.push(url);
-        if (urls.current.length > 3) URL.revokeObjectURL(urls.current.shift());
-        setReplyAudio(url);
-        if (player.current) {
-          player.current.src = url;
-          try { await player.current.play(); }
-          catch { setNotice("Tap the audio player to hear the reply."); }
+      const capture = new LiveAudio(packet => {
+        const ws = socket.current;
+        if (ws?.readyState === WebSocket.OPEN && capture.connected) {
+          if (ws.bufferedAmount > 256000) { end("Connection too slow for live audio. Reconnect on a stronger network."); return; }
+          ws.send(packet);
         }
-      }
-      if (result.audio_error) setNotice(result.audio_error);
-      setText("");
-    } catch (err) {
-      if (mounted.current && turn === epoch.current) setError(err.name === "AbortError" ? "The reply timed out. Please try again." : err.message);
-    } finally {
-      clearTimeout(timeout);
-      if (mounted.current && turn === epoch.current) setBusy(false);
-    }
-  };
-  sendRef.current = sendTurn;
-
-  const stopRecording = () => {
-    if (recorder.current?.state === "recording") recorder.current.stop();
-  };
-  const startRecording = async () => {
-    if (!ready || busy || recording) return;
-    setError(""); setNotice(""); player.current?.pause();
-    const turn = epoch.current;
-    try {
-      const input = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-      if (!mounted.current || turn !== epoch.current) { input.getTracks().forEach(track => track.stop()); return; }
-      stream.current = input;
-      const mime = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"].find(type => MediaRecorder.isTypeSupported(type));
-      const capture = new MediaRecorder(input, mime ? { mimeType: mime } : undefined);
-      recorder.current = capture;
-      const chunks = [];
-      capture.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
-      capture.onerror = () => { setError("Microphone recording failed. Try again."); stopRecording(); };
-      capture.onstop = async () => {
-        clearInterval(meter.current); input.getTracks().forEach(track => track.stop()); closeContext(context);
-        if (!mounted.current || turn !== epoch.current) return;
-        setRecording(false);
+      }, playing => { if (mounted.current && generation.current === turn) setSpeaking(playing); });
+      audio.current = capture;
+      // Resume audio during this user gesture, before any network request.
+      await capture.open();
+      if (!mounted.current || turn !== generation.current) { capture.close(); return; }
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(`${protocol}//${location.host}/api/rag/live`); socket.current = ws;
+      timeout.current = setTimeout(() => { if (turn === generation.current) end("Live connection timed out. Check your API key and network, then restart."); }, 30000);
+      ws.onopen = () => { if (turn === generation.current) ws.send(JSON.stringify({ type: "start", language, name: name.trim(), sample_rate: capture.context.sampleRate })); };
+      ws.onmessage = event => {
+        if (turn !== generation.current) return;
         try {
-          const blob = new Blob(chunks, { type: capture.mimeType });
-          if (!blob.size || blob.size > 4 * 1024 * 1024) throw new Error("Keep recordings short (maximum 4 MB).");
-          const audio = await base64(blob);
-          if (mounted.current && turn === epoch.current) await sendRef.current({ audio });
-        } catch (err) { if (mounted.current && turn === epoch.current) setError(err.message); }
+          const result = JSON.parse(event.data);
+          if (result.type === "ready") { clearTimeout(timeout.current); capture.connected = true; setPhase("Listening"); }
+          else if (result.type === "audio") capture.play(result.data, result.sample_rate);
+          else if (result.type === "audio_file") capture.playFile(result.data).catch(err => { if (turn === generation.current) end(err.message); });
+          else if (result.type === "notice") setError(result.message);
+          else if (result.type === "navigation") setNavigation(result);
+          else if (result.type === "interrupted") { capture.interrupt(); setPhase("Listening"); }
+          else if (result.type === "state") setPhase(result.state);
+          else if (result.type === "turn_complete") setPhase("Listening");
+          else if (result.type === "transcript") setMessages(previous => {
+            const exists = previous.some(message => message.id === result.id);
+            return (exists ? previous.map(message => message.id === result.id ? result : message) : [...previous, result]).slice(-40);
+          });
+          else if (result.type === "error") end(result.message);
+        } catch (err) { end(err.message || "Live audio could not be played."); }
       };
-      const AudioContext = window.AudioContext || window.webkitAudioContext;
-      const audioContext = new AudioContext(); context.current = audioContext; await audioContext.resume();
-      const analyser = audioContext.createAnalyser(); analyser.fftSize = 2048;
-      audioContext.createMediaStreamSource(input).connect(analyser);
-      const samples = new Float32Array(analyser.fftSize);
-      const started = performance.now(); let voiced = 0, lastVoice = started;
-      // This browser meter ends a turn after a pause; the server independently
-      // checks the actual recording with the existing Silero VAD before STT.
-      meter.current = setInterval(() => {
-        analyser.getFloatTimeDomainData(samples);
-        const rms = Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
-        const now = performance.now();
-        if (rms > 0.015) { voiced += 100; lastVoice = now; }
-        if (now - started > 59000 || (autoSend && voiced >= 200 && now - lastVoice > 1100)) stopRecording();
-      }, 100);
-      capture.start(); setRecording(true);
+      ws.onerror = () => { if (turn === generation.current) end("Live connection failed. Reopen the RAG tab and check the computer RAG log."); };
+      ws.onclose = () => { if (turn === generation.current) end("Live conversation disconnected. Press Start conversation to reconnect."); };
     } catch (err) {
-      stream.current?.getTracks().forEach(track => track.stop());
-      closeContext(context);
-      if (mounted.current) { setRecording(false); setError(err.name === "NotAllowedError" ? "Allow microphone access in your browser settings." : err.message); }
+      if (turn === generation.current) end(err.name === "NotAllowedError" ? "Allow microphone access in your browser settings." : err.message);
     }
   };
 
-  const endConversation = () => {
-    const old = session.current; epoch.current += 1; controller.current?.abort();
-    if (recorder.current?.state === "recording") { recorder.current.onstop = null; recorder.current.stop(); }
-    clearInterval(meter.current); stream.current?.getTracks().forEach(track => track.stop()); closeContext(context);
-    player.current?.pause(); urls.current.forEach(URL.revokeObjectURL); urls.current = [];
-    setRecording(false); setBusy(false); setMessages([]); setText(""); setReplyAudio(""); setError(""); setNotice("Conversation cleared.");
-    session.current = newSession();
-    fetch("/api/rag/end", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: old }) }).catch(() => {});
+  const toggleMute = () => {
+    const value = !muted; audio.current?.mute(value); setMuted(value);
+    if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ type: "mute", value }));
   };
+  const state = !running ? ready ? "Ready to talk" : backend?.ready && !backend.configured ? "API key required" : "Preparing" : muted ? "Microphone muted" : speaking ? "Assistant speaking" : phase;
 
-  return <section className="ragpanel" aria-label="RAG conversation">
-    <div className="cardhead"><span>AIRPORT PASSENGER ASSISTANT</span><span>{recording ? "Listening" : busy ? backend?.stage === "Ready" ? "Preparing reply" : backend?.stage : ready ? "Ready" : "Preparing"}</span></div>
+  return <section className="ragpanel" aria-label="Live RAG conversation">
+    <div className="cardhead"><span>AIRPORT PASSENGER ASSISTANT</span><span>{state}</span></div>
     <div className="ragbody">
-      <p>Ask about airport places and passenger services. Speak through this device or type a message.</p>
+      <p>Start once and talk naturally. Your airport assistant listens, replies aloud, and stays ready for your next question. You can interrupt while it is speaking.</p>
       <div className="ragsettings">
-        <label>Language<select value={language} disabled={busy || recording} onChange={event => { endConversation(); setLanguage(event.target.value); }}>{Object.entries(LANGUAGES).map(([code, title]) => <option key={code} value={code}>{title}</option>)}</select></label>
-        <label>Your name (optional)<input maxLength={60} value={name} disabled={busy || recording} onChange={event => setName(event.target.value)} /></label>
+        <label>Language<select value={language} disabled={running} onChange={event => setLanguage(event.target.value)}>{Object.entries(LANGUAGES).map(([code, title]) => <option key={code} value={code}>{title}</option>)}</select></label>
+        <label>Your name (optional)<input maxLength={60} value={name} disabled={running} onChange={event => setName(event.target.value)} /></label>
       </div>
       {backend?.error && <p className="labelerror" role="status">{backend.error}</p>}
       {backend?.ready && !backend.configured && <p className="labelerror">Set GOOGLE_API_KEY on the computer or in the workspace .env, then restart the UI. Your key stays on the computer.</p>}
-      {!microphoneSupported && <p className="hint">Microphone access needs HTTPS on a phone, or localhost on this computer. Typed conversation is available here.</p>}
-      <div ref={log} className="ragmessages" role="log" aria-live="polite">
-        {!messages.length && <p className="hint">Hello! I’m your airport assistant. How can I help you?</p>}
-        {messages.map((message, index) => <article key={index} className={message.role === "You" ? "human" : "assistant"}><strong>{message.role}</strong><p>{message.text}</p></article>)}
+      {!supported && <p className="labelerror">Live microphone access needs HTTPS on your phone, or localhost on this computer, and a browser with AudioWorklet support.</p>}
+      <div className="voice-navigation">
+        <strong>Spoken destination → Nav2</strong>
+        <p>{mapContext?.map_name ? `Map: ${mapContext.map_name} · ${mapContext.localized ? "Robot localized" : "Set initial pose in Maps & Localization"}` : "Load a saved map and set the robot pose in Maps & Localization before requesting guidance."}</p>
+        <p>{mapContext?.locations?.length ? `Saved destinations: ${mapContext.locations.map(item => item.text).join(", ")}` : "No saved destinations for the loaded map."}</p>
+        <p>Say “Take me to [saved location]” to request guidance, or “Stop navigation” to cancel.</p>
+        {navigation && <p role="status">{navigation.message || navigation.state}</p>}
+        {navigationStatus && <p role="status">Robot: {navigationStatus.message}</p>}
       </div>
-      <form onSubmit={event => { event.preventDefault(); if (text.trim() && !recording) sendTurn({ text: text.trim() }); }}>
-        <label htmlFor="rag-message">Message</label><textarea id="rag-message" maxLength={2000} value={text} disabled={busy || recording} onChange={event => setText(event.target.value)} placeholder="Where can I find baggage claim?" />
-        <div className="ragactions">
-          <button type="submit" disabled={!ready || busy || recording || !text.trim()}>Send message</button>
-          <button type="button" className={recording ? "active" : ""} disabled={!ready || busy || !microphoneSupported || backend?.microphone_available === false} onClick={recording ? stopRecording : startRecording}>{recording ? "Stop & send recording" : "Record voice"}</button>
-          <button type="button" onClick={endConversation}>Stop / Clear conversation</button>
-        </div>
-      </form>
-      <div className="ragpreferences">
-        <label><input type="checkbox" checked={speak} disabled={busy || recording} onChange={event => setSpeak(event.target.checked)} />Speak replies on this device</label>
-        <label><input type="checkbox" checked={autoSend} disabled={recording} onChange={event => setAutoSend(event.target.checked)} />Send recording after a pause</label>
+      <div className={`livevoice ${running ? "running" : ""} ${speaking ? "speaking" : ""}`}>
+        <div className="voiceorb" aria-hidden="true">◉</div>
+        <strong role="status">{state}</strong>
+        <p>{running ? "Keep talking — no record or send buttons needed." : "Press Start conversation and allow the microphone."}</p>
       </div>
-      <audio ref={player} src={replyAudio || undefined} controls hidden={!replyAudio} aria-label="Assistant reply audio" />
+      <div className="ragactions liveactions">
+        <button disabled={!ready || !supported || running} onClick={start}>Start conversation</button>
+        <button disabled={!running} onClick={() => end()}>End conversation</button>
+        <button disabled={!running || phase === "Connecting"} onClick={toggleMute}>{muted ? "Unmute microphone" : "Mute microphone"}</button>
+      </div>
       {error && <p className="labelerror" role="alert">{error}</p>}
-      {notice && <p className="labelnotice" role="status">{notice}</p>}
-      <p className="hint">Selecting this tab pauses robot control. Conversation provides spoken guidance; navigation is controlled in the Navigate tab.</p>
+      <details className="livetranscript" open><summary>Live transcript</summary>
+        <div ref={log} className="ragmessages" role="log" aria-live="polite">
+          {!messages.length && <p className="hint">Your conversation will appear here as you speak.</p>}
+          {messages.map(message => <article key={message.id} className={message.role === "user" ? "human" : "assistant"}><strong>{message.role === "user" ? "You" : "Airport assistant"}</strong><p>{message.text}</p></article>)}
+        </div>
+      </details>
+      <p className="hint">This device supplies the microphone and speaker. {backend?.pipeline === "gemini_live" ? "Native Gemini Live audio is enabled for this session." : "Audio is checked by WebRTC VAD and transcribed by Whisper on the computer. Gemini answers from retrieved airport knowledge; TTS plays replies here."} Leaving this tab ends the conversation. Spoken guidance uses saved map locations and Nav2.</p>
     </div>
   </section>;
 }

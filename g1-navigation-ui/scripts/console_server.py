@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Local console supervisor. Owns and cleans up only processes it starts."""
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -16,17 +17,19 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import rclpy
 from lifecycle_msgs.srv import GetState
 from nav_msgs.msg import OccupancyGrid
-from geometry_msgs.msg import PoseWithCovarianceStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped, PoseStamped
 from rclpy.signals import SignalHandlerOptions
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from std_msgs.msg import String, Bool
 from map_library import MapLibrary
+from spoken_navigation import goal_is_free
 
 UI = Path(__file__).resolve().parents[1]
 WORKSPACE = UI.parent / 'g1-ros2-workspace'
 API_PORT = int(os.environ.get('G1_CONSOLE_PORT', '8765'))
 UI_PORT = int(os.environ.get('G1_UI_PORT', '5173'))
 RAG_PORT = int(os.environ.get('G1_RAG_PORT', '8767'))
+LIVE_PORT = int(os.environ.get('G1_RAG_LIVE_PORT', RAG_PORT + 1))
 BRIDGE_PORT = int(os.environ.get('G1_ROSBRIDGE_PORT', '9090'))
 LIBRARY = MapLibrary(os.environ.get('G1_MAPS_DIR', WORKSPACE / 'src/g1_navigation/maps'), WORKSPACE)
 LOGS = WORKSPACE / 'log/console'
@@ -41,6 +44,9 @@ class Supervisor:
         self.selected = None
         self.error = ''
         self.rag_error = ''
+        self.estop = False
+        self.navigation_status = {'state': 'idle', 'message': 'No navigation request'}
+        self.gateway_mode = 'idle'
         self.transitioning = False
         self.amcl_ready = False
         self.navigation_ready = False
@@ -49,11 +55,14 @@ class Supervisor:
         self.mode_pub = self.node.create_publisher(String, '/ui/mode', 10)
         self.cancel_pub = self.node.create_publisher(Bool, '/ui/cancel_navigation', 10)
         self.speech_pub = self.node.create_publisher(String, '/g1/speech_text', 10)
+        self.goal_pub = self.node.create_publisher(PoseStamped, '/ui/goal', 10)
         self.answer_pub = self.node.create_publisher(String, '/g1/agent_response', 10)
         self.clients = {name: self.node.create_client(GetState, f'/{name}/get_state') for name in ('amcl', 'bt_navigator', 'collision_monitor', 'velocity_smoother')}
         self.futures = {}
         self.future_started = {}
         self.readiness = {}
+        self.node.create_subscription(Bool, '/ui/emergency_stop', lambda msg: setattr(self, 'estop', bool(msg.data)), 10)
+        self.node.create_subscription(String, '/ui/navigation_status', self.on_navigation_status, 10)
         self.node.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self.on_pose, 10)
         self.node.create_subscription(PoseWithCovarianceStamped, '/initialpose', self.on_initial_pose, 10)
         self.node.create_timer(1.0, self.poll_ready)
@@ -63,6 +72,90 @@ class Supervisor:
         qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.node.create_subscription(OccupancyGrid, '/map', self.on_map, qos)
         self.node.create_timer(1.0, self.replay_map)
+
+    def on_navigation_status(self, msg):
+        try:
+            value = json.loads(msg.data)
+            self.navigation_status = value
+            if value.get('message', '').startswith('Mode: '):
+                self.gateway_mode = value['message'].split(': ', 1)[1]
+        except (ValueError, TypeError):
+            pass
+
+    def rag_context(self):
+        from g1_navigation.label_store import LabelStore
+        locations = []
+        if self.mode == 'localization' and self.selected:
+            locations = LabelStore(LIBRARY.directory).load(self.selected['name'])
+        return {'map_id': self.selected['id'] if self.selected else None,
+                'map_name': self.selected['name'] if self.selected else None,
+                'locations': locations, 'localized': self.localized,
+                'navigation': self.navigation_status}
+
+    def spoken_destination(self, payload):
+        if self.tab != 'rag' or self.transitioning:
+            raise ValueError('Keep the RAG conversation tab open')
+        if self.estop:
+            raise ValueError('Emergency stop is engaged')
+        if self.mode != 'localization' or not self.selected or self.map is None:
+            raise ValueError('Load a saved map in Maps & Localization first')
+        if not self.localized or not self.amcl_ready:
+            raise ValueError('Set the robot initial pose and wait for AMCL localization')
+        context = self.rag_context()
+        if payload.get('map_id') != context['map_id']:
+            raise ValueError('The loaded map changed; repeat the destination request')
+        label = next((item for item in context['locations'] if item['id'] == payload.get('location_id')), None)
+        if label is None:
+            raise ValueError('Destination is not a saved location on this map')
+        if not goal_is_free(self.map, label):
+            raise ValueError('The saved location must be in known free map space')
+        return label
+
+    def prepare_spoken_navigation(self, payload):
+        with self.lock:
+            self.spoken_destination(payload)
+            self.ensure_web()
+            self.ensure('safety', ['ros2', 'launch', 'g1_navigation', 'safety.launch.py'])
+            self.ensure('stack_nav', ['ros2', 'launch', 'g1_navigation', 'mapping.launch.py',
+                                      'start_sim:=false', 'start_web:=false', 'start_slam:=false',
+                                      'start_nav:=true', 'cmd_vel_topic:=/cmd_vel_controller'])
+        deadline = time.monotonic() + 40
+        while time.monotonic() < deadline:
+            with self.lock:
+                self.spoken_destination(payload)
+                if self.navigation_ready and all(self.readiness.get(name, False) for name in ('collision_monitor', 'velocity_smoother')):
+                    return {'ready': True}
+            time.sleep(.1)
+        raise ValueError('Nav2 or its collision/velocity controllers are not ready; check navigation logs')
+
+    def send_spoken_goal(self, payload):
+        with self.lock:
+            label = self.spoken_destination(payload)
+            if not self.navigation_ready or not all(self.readiness.get(name, False) for name in ('collision_monitor', 'velocity_smoother')):
+                raise ValueError('Nav2 and collision controls must be ready')
+            self.mode_pub.publish(String(data='navigate'))
+        deadline = time.monotonic() + 2
+        while self.gateway_mode != 'navigate' and time.monotonic() < deadline:
+            if self.tab != 'rag' or self.estop:
+                raise ValueError('Navigation was canceled')
+            time.sleep(.02)
+        with self.lock:
+            label = self.spoken_destination(payload)
+            if self.gateway_mode != 'navigate':
+                raise ValueError('Navigation gateway did not acknowledge navigation mode')
+            goal = PoseStamped()
+            goal.header.frame_id = 'map'
+            goal.header.stamp = self.node.get_clock().now().to_msg()
+            goal.pose.position.x, goal.pose.position.y = label['x'], label['y']
+            goal.pose.orientation.z, goal.pose.orientation.w = math.sin(label['yaw'] / 2), math.cos(label['yaw'] / 2)
+            self.goal_pub.publish(goal)
+            return {'state': 'submitted', 'destination': label['text'], 'message': f"Goal submitted for {label['text']}"}
+
+    def cancel_spoken_navigation(self):
+        if self.tab == 'rag':
+            self.mode_pub.publish(String(data='idle'))
+            self.cancel_pub.publish(Bool(data=True))
+        return {'state': 'canceled', 'message': 'Navigation canceled'}
 
     def on_map(self, msg):
         self.map = msg
@@ -151,12 +244,13 @@ class Supervisor:
         if old and old.poll() is not None:
             self.stop('rag')
         if 'rag' not in self.processes:
-            with socket.socket() as probe:
-                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                try:
-                    probe.bind(('127.0.0.1', RAG_PORT))
-                except OSError as exc:
-                    raise ValueError(f'Conversation port {RAG_PORT} is already occupied') from exc
+            for port in (RAG_PORT, LIVE_PORT):
+                with socket.socket() as probe:
+                    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    try:
+                        probe.bind(('127.0.0.1', port))
+                    except OSError as exc:
+                        raise ValueError(f'Conversation port {port} is already occupied') from exc
             self.rag_error = ''
             self.spawn('rag', ['/usr/bin/python3', str(UI / 'scripts/rag-launcher.py')])
 
@@ -293,6 +387,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/api/session':
             self.respond(200, self.server.supervisor.status())
+        elif self.path == '/api/rag/context':
+            try:
+                self.respond(200, self.server.supervisor.rag_context())
+            except Exception:
+                self.respond(400, {'error': 'Saved map labels are unavailable'})
         elif self.path == '/api/rag/status':
             try:
                 self.respond(200, self.server.supervisor.rag_request('status'))
@@ -322,7 +421,19 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length))
             if not isinstance(payload, dict):
                 raise ValueError('Expected a JSON object')
-            if self.path in ('/api/rag/turn', '/api/rag/end'):
+            if self.path == '/api/rag/prepare-navigation':
+                result = self.server.supervisor.prepare_spoken_navigation(payload)
+            elif self.path == '/api/rag/goal':
+                result = self.server.supervisor.send_spoken_goal(payload)
+            elif self.path == '/api/rag/cancel':
+                result = self.server.supervisor.cancel_spoken_navigation()
+            elif self.path == '/api/rag/transcript':
+                if self.server.supervisor.tab != 'rag':
+                    raise ValueError('Open the RAG tab first')
+                self.server.supervisor.speech_pub.publish(String(data=str(payload.get('text', ''))[:2000]))
+                self.server.supervisor.answer_pub.publish(String(data=str(payload.get('answer', ''))[:4000]))
+                result = {'published': True}
+            elif self.path in ('/api/rag/turn', '/api/rag/end'):
                 result = self.server.supervisor.rag_request(self.path.rsplit('/', 1)[1], payload)
             elif self.path == '/api/maps/save':
                 with self.server.supervisor.lock:
