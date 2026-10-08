@@ -115,7 +115,8 @@ def generate_launch_description():
                 name='bt_navigator',
                 output='screen',
                 condition=IfCondition(start_nav),
-                parameters=[nav_params, common],
+                parameters=[nav_params, common, {'default_nav_to_pose_bt_xml': os.path.join(
+                    nav_share, 'behavior_trees', 'navigate_with_clearance_recovery.xml')}],
             ),
             Node(
                 package='nav2_lifecycle_manager',

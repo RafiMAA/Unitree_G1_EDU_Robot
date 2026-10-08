@@ -61,7 +61,7 @@ def retreat_velocity(points, vx, vy, wz, speed_limit=0.10):
 class RetreatGuard(Node):
     def __init__(self):
         super().__init__('g1_retreat_guard')
-        self.mode = 'mapping'
+        self.mode = 'idle'
         self.estop = False
         self.request = Twist()
         self.monitored = Twist()
@@ -89,6 +89,8 @@ class RetreatGuard(Node):
         if self.monitor_future is not None and not self.monitor_future.done():
             if self.monitor_checked is not None and self.now() - self.monitor_checked > 1.5:
                 self.monitor_active = False
+                self.monitor_future.cancel()
+                self.monitor_future = None
             return
         if self.monitor_future is not None:
             try:

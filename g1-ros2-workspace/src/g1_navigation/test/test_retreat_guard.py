@@ -55,7 +55,7 @@ def test_no_observations_or_invalid_velocity_cannot_authorize_retreat():
     assert retreat_velocity([[0.46, 0, float('nan')]], -0.2, 0, 0) is None
 
 
-def test_guard_geometry_matches_nav2_stop_and_padded_footprint():
+def test_navigation_checks_padded_footprint_along_commanded_motion():
     config = yaml.safe_load((Path(__file__).parents[1] / 'config/nav2_params.yaml').read_text())
     local = config['local_costmap']['local_costmap']['ros__parameters']
     points = np.array(yaml.safe_load(local['footprint']))
@@ -63,13 +63,20 @@ def test_guard_geometry_matches_nav2_stop_and_padded_footprint():
     assert points[:, 0].min() - padding == pytest.approx(-0.29)
     assert points[:, 0].max() + padding == pytest.approx(0.39)
     assert abs(points[:, 1]).max() + padding == pytest.approx(0.33)
-    stop = config['collision_monitor']['ros__parameters']['stop_zone']
-    assert stop['points'] == [0.41, 0.35, 0.41, -0.35, -0.31, -0.35, -0.31, 0.35]
-    stop_vertices = np.array(stop['points']).reshape(-1, 2)
-    assert stop_vertices[:, 0].min() < points[:, 0].min() - padding
-    assert stop_vertices[:, 0].max() > points[:, 0].max() + padding
-    assert abs(stop_vertices[:, 1]).max() > abs(points[:, 1]).max() + padding
-    assert stop['max_points'] == 4
+    monitor = config['collision_monitor']['ros__parameters']
+    assert monitor['polygons'] == ['footprint_approach']
+    approach = monitor['footprint_approach']
+    assert approach['action_type'] == 'approach'
+    assert approach['footprint_topic'] == '/local_costmap/published_footprint'
+    # The prediction horizon must cover the allowed sensor age.
+    assert approach['time_before_collision'] >= monitor['source_timeout']
+    for name in ('local_costmap', 'global_costmap'):
+        costmap = config[name][name]['ros__parameters']
+        # An inflation field smaller than the inscribed body makes point-cell
+        # planning disagree with footprint collision checks.
+        inscribed_radius = min(-points[:, 0].min(), points[:, 0].max(), abs(points[:, 1]).max()) + padding
+        assert costmap['inflation_layer']['inflation_radius'] > inscribed_radius
+        assert 'obstacle_layer' in costmap['plugins']
 
 
 def test_repeated_padding_intrusion_can_escape_without_crossing_physical_body():
@@ -148,3 +155,25 @@ def test_navigation_obeys_collision_output_and_sensor_freshness():
     guard.fresh = lambda name, *args: name != 'points'
     RetreatGuard.tick(guard)
     assert guard.output.publish.call_args.args[0].linear.x == 0
+
+
+def test_monitor_readiness_retries_after_a_timed_out_lifecycle_request():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from g1_navigation.retreat_guard import RetreatGuard
+    stalled = Mock()
+    stalled.done.return_value = False
+    client = Mock()
+    client.service_is_ready.return_value = True
+    ready = Mock()
+    ready.done.return_value = True
+    ready.result.return_value = SimpleNamespace(current_state=SimpleNamespace(id=3))
+    client.call_async.return_value = ready
+    guard = SimpleNamespace(monitor_future=stalled, monitor_active=True,
+                            monitor_checked=1., now=lambda: 10., monitor_client=client)
+    RetreatGuard.check_monitor(guard)
+    stalled.cancel.assert_called_once()
+    assert not guard.monitor_active
+    RetreatGuard.check_monitor(guard)
+    RetreatGuard.check_monitor(guard)
+    assert guard.monitor_active

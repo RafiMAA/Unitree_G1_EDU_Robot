@@ -227,16 +227,36 @@ even when LiDAR reports wall contact or obstacle data is missing. Emergency stop
 Idle and stale-command timeouts still stop motion. Map-canvas arrow keys pan the
 view; use the drive buttons or WASD for robot motion.
 
-**Navigate** continues to use Collision Monitor with a smaller zone:
-- Stop: x from -0.31 to 0.41 m, y from -0.35 to 0.35 m.
-- Slowdown: x from -0.40 to 0.50 m, y from -0.39 to 0.39 m.
+**Navigate** uses Collision Monitor's approach model with the local costmap's
+padded robot footprint. It predicts collisions one second along the requested
+translation/rotation. This permits backing away from a front wall when the
+rear is clear, while slowing/stopping motion toward obstacles. Physical overlap
+still stops motion. The final output guard stops on stale obstacle data,
+inactive collision monitoring, emergency stop, idle mode, or stale commands.
 
-Coordinates are relative to `base_footprint`; the stop zone surrounds the padded
-physical footprint. Both costmaps use 1 cm footprint padding, a 0.13 m
-inflation radius and a 6.0 cost scaling factor to reduce the extra corridor
-margin. The self-return mask uses 1 cm padding so it does not hide obstacles
-inside the smaller stop region. Navigation still stops on stale obstacle data. Its final
-output follows Collision Monitor without a second, larger hard-coded stop zone.
+Both costmaps use 1 cm footprint padding, a **0.55 m inflation radius**, and a
+6.0 cost scaling factor. Inflation radius is measured from an obstacle, not
+extra clearance beyond the robot body. The previous 0.13 m value was below the
+0.29 m inscribed footprint radius and caused disagreement between point-cell
+planning and body collision checks. Both costmaps now include live LiDAR
+obstacles so replanning can choose another route around them.
+
+Navigation uses `navigate_with_clearance_recovery.xml`: replan at 2 Hz, detect
+no positional progress after 8 seconds, and try a collision-checked 0.30 m
+backup at 0.15 m/s before costmap clearing, a short spin, or a wait. Recovery
+retries are bounded; no collision-free escape results in a failed goal.
+The default Nav2 backup speed of 0.05 m/s was below the simulator's 0.10 gait
+phase threshold. Forward tracking now caps speed at 0.35 m/s and slows near
+the goal to 0.15 m/s. Restart the UI/navigation processes after changing these
+settings. Simulation remains in its own terminal.
+
+Developer verification: after sourcing ROS and the workspace, run
+`python3 src/g1_navigation/scripts/check_navigation_recovery.py` from the
+workspace. It starts real Nav2 servers with synthetic map/point-cloud data on
+isolated ROS domain 97, checks obstacle detours, directional collision responses,
+stale-data stopping, and automatic backup for a stationary robot. It starts no
+robot or simulator and cleans up its own processes. Logs use
+`/tmp/g1-recovery-*.log`. This does not verify the MuJoCo locomotion dynamics.
 
 ## Save and browse maps
 

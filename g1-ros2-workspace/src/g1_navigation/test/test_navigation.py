@@ -69,5 +69,7 @@ def test_narrow_corridor_costmaps_retain_physical_footprint_with_less_padding():
         assert np.ptp(footprint[:, 1]) == .64
         assert params['footprint_padding'] == .01
         inflation = params['inflation_layer']
-        assert inflation['inflation_radius'] == .25
+        # A useful cost gradient must extend beyond the robot's body, rather
+        # than letting the point-cell planner route its center next to walls.
+        assert inflation['inflation_radius'] > np.linalg.norm(footprint, axis=1).max() + params['footprint_padding']
         assert inflation['cost_scaling_factor'] == 6.0
