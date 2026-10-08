@@ -55,7 +55,7 @@ def test_no_observations_or_invalid_velocity_cannot_authorize_retreat():
     assert retreat_velocity([[0.46, 0, float('nan')]], -0.2, 0, 0) is None
 
 
-def test_guard_geometry_matches_nav2_stop_and_padded_footprint():
+def test_navigation_prediction_uses_the_padded_costmap_footprint():
     config = yaml.safe_load((Path(__file__).parents[1] / 'config/nav2_params.yaml').read_text())
     local = config['local_costmap']['local_costmap']['ros__parameters']
     points = np.array(yaml.safe_load(local['footprint']))
@@ -63,13 +63,12 @@ def test_guard_geometry_matches_nav2_stop_and_padded_footprint():
     assert points[:, 0].min() - padding == pytest.approx(-0.29)
     assert points[:, 0].max() + padding == pytest.approx(0.39)
     assert abs(points[:, 1]).max() + padding == pytest.approx(0.33)
-    stop = config['collision_monitor']['ros__parameters']['stop_zone']
-    assert stop['points'] == [0.41, 0.35, 0.41, -0.35, -0.31, -0.35, -0.31, 0.35]
-    stop_vertices = np.array(stop['points']).reshape(-1, 2)
-    assert stop_vertices[:, 0].min() < points[:, 0].min() - padding
-    assert stop_vertices[:, 0].max() > points[:, 0].max() + padding
-    assert abs(stop_vertices[:, 1]).max() > abs(points[:, 1]).max() + padding
-    assert stop['max_points'] == 4
+    monitor = config['collision_monitor']['ros__parameters']
+    assert monitor['polygons'] == ['footprint_approach']
+    approach = monitor['footprint_approach']
+    assert approach['action_type'] == 'approach'
+    assert approach['footprint_topic'] == '/local_costmap/published_footprint'
+    assert approach['time_before_collision'] >= monitor['source_timeout']
 
 
 def test_repeated_padding_intrusion_can_escape_without_crossing_physical_body():

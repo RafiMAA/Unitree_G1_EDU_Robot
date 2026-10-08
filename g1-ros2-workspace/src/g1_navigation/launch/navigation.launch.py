@@ -126,7 +126,8 @@ def generate_launch_description():
                 condition=IfCondition(start_nav),
                 name='bt_navigator',
                 output='screen',
-                parameters=[params_file, common],
+                parameters=[params_file, common, {'default_nav_to_pose_bt_xml': os.path.join(
+                    nav_share, 'behavior_trees', 'navigate_with_clearance_recovery.xml')}],
             ),
             OpaqueFunction(function=lifecycle_manager),
             IncludeLaunchDescription(

@@ -69,5 +69,15 @@ def test_narrow_corridor_costmaps_retain_physical_footprint_with_less_padding():
         assert np.ptp(footprint[:, 1]) == .64
         assert params['footprint_padding'] == .01
         inflation = params['inflation_layer']
-        assert inflation['inflation_radius'] == .25
+        if name == 'global_costmap':
+            assert inflation['inflation_radius'] > np.linalg.norm(footprint, axis=1).max() + params['footprint_padding']
+        else:
+            assert inflation['inflation_radius'] <= .10
         assert inflation['cost_scaling_factor'] == 6.0
+    controller = config['controller_server']['ros__parameters']['FollowPath']
+    assert controller['motion_model'] == 'DiffDrive'
+    assert controller['vx_min'] == 0 and controller['vy_max'] == 0
+    assert controller['primary_controller'] == 'nav2_mppi_controller::MPPIController'
+    assert controller['angular_dist_threshold'] <= .15
+    assert controller['angular_disengage_threshold'] <= .10
+    assert controller['CostCritic']['consider_footprint']

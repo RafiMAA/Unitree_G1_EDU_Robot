@@ -227,16 +227,45 @@ even when LiDAR reports wall contact or obstacle data is missing. Emergency stop
 Idle and stale-command timeouts still stop motion. Map-canvas arrow keys pan the
 view; use the drive buttons or WASD for robot motion.
 
-**Navigate** continues to use Collision Monitor with a smaller zone:
-- Stop: x from -0.31 to 0.41 m, y from -0.35 to 0.35 m.
-- Slowdown: x from -0.40 to 0.50 m, y from -0.39 to 0.39 m.
+**Navigate** separates path selection from local movement:
+- Global inflation radius: **0.55 m**, used by NavFn to select a path with clearance.
+- Local inflation radius: **0.10 m**, used as a soft cost field for movement.
+- Rotation Shim starts turning when the path heading error exceeds 0.15 radians
+  and finishes within 0.10 radians (about 5.7 degrees), then hands off to MPPI **DiffDrive** for forward
+  tracking. Normal tracking has no sideways or reverse velocity; the separate
+  BackUp recovery still reverses when required. MPPI's CostCritic checks the full rectangular body, so the small
+  local inflation field does not replace physical footprint collision checking.
 
-Coordinates are relative to `base_footprint`; the stop zone surrounds the padded
-physical footprint. Both costmaps use 1 cm footprint padding, a 0.13 m
-inflation radius and a 6.0 cost scaling factor to reduce the extra corridor
-margin. The self-return mask uses 1 cm padding so it does not hide obstacles
-inside the smaller stop region. Navigation still stops on stale obstacle data. Its final
-output follows Collision Monitor without a second, larger hard-coded stop zone.
+Both costmaps retain 1 cm footprint padding and include live LiDAR obstacles.
+Collision Monitor predicts collision one second along the requested motion,
+using the padded footprint. A front wall can therefore permit a clear reverse
+escape instead of a fixed stop box suppressing every direction. Actual footprint
+overlap, stale sensor data, emergency stop, and stale commands still stop motion.
+
+The custom `navigate_with_clearance_recovery.xml` replans at 2 Hz. After 8
+seconds without positional progress, recovery tries a collision-checked 30 cm
+backup at 0.15 m/s before clearing costmaps, a short spin, or waiting. The original
+goal is retried after recovery; attempts are bounded when no feasible route exists.
+The backup speed exceeds the locomotion policy's 0.10 gait threshold.
+Restart the UI/navigation processes after changing these settings.
+
+For isolated verification, source ROS and the workspace and run from the workspace:
+
+```bash
+python3 src/g1_navigation/scripts/check_navigation_recovery.py
+python3 src/g1_navigation/scripts/check_narrow_corridor.py
+python3 src/g1_navigation/scripts/check_path_heading.py
+```
+
+These scripts launch real Nav2 nodes on ROS domains 97 and 98 using synthetic
+sensors. The corridor check integrates the final guarded velocity to model an
+80 cm corridor, forces an initial stall, and verifies backup followed by reaching
+the original goal without footprint overlap. Neither starts a robot or simulator;
+all clean up their own processes. Run these checks sequentially: the corridor
+and heading checks share domain 98. The heading check verifies turning toward
+a 90-degree path before translating, no strafe/reverse tracking, and goal success.
+Its logs are `/tmp/g1-heading-*.log`. Other logs are `/tmp/g1-recovery-*.log` and
+`/tmp/g1-corridor-*.log`. These checks do not model MuJoCo locomotion dynamics.
 
 ## Save and browse maps
 

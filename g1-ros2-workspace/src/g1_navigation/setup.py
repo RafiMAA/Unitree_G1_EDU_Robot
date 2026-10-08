@@ -16,7 +16,10 @@ setup(
         ('share/' + package_name, ['package.xml', 'README.md']),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
-        (os.path.join('share', package_name, 'maps'), glob('maps/*')),
+        (os.path.join('share', package_name, 'behavior_trees'), glob('behavior_trees/*.xml')),
+        *[(os.path.join('share', package_name, directory),
+           [os.path.join(directory, filename) for filename in files])
+          for directory, _, files in os.walk('maps') if files],
     ],
     install_requires=['setuptools'],
     zip_safe=True,
