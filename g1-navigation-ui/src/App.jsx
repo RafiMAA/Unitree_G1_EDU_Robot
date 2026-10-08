@@ -74,6 +74,10 @@ export default function App() {
   const [labelDraft, setLabelDraft] = useState(null);
   const labelEditingRef = useRef(false);
   labelEditingRef.current = labelPicking || Boolean(labelDraft) || posePicking || switching || Boolean(session && !session.safety_ready);
+  const manualDriveEnabled = activeTab === "mapping" && mode === "mapping" && connected && !estop
+    && !labelPicking && !labelDraft && !posePicking && !switching && Boolean(session?.safety_ready);
+  const manualDriveRef = useRef(false);
+  manualDriveRef.current = manualDriveEnabled;
 
   const send = useCallback((message) => {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -185,7 +189,7 @@ export default function App() {
   // ── Latching helpers — mirror teleop_keyboard.py exactly ──────────────
   // Each direction key sets ONE axis and zeroes the other two.
   const latch = useCallback((key) => {
-    if (modeRef.current !== "mapping" || estop || labelEditingRef.current) return;
+    if (!manualDriveRef.current) return;
     const lin = linRef.current;
     const ang = angRef.current;
     const L = latchRef.current;
@@ -209,7 +213,7 @@ export default function App() {
     publish(TOPICS.teleop[0], zeroTwist());
   }, [publish]);
 
-  const labelEditing = labelPicking || Boolean(labelDraft) || posePicking || switching || Boolean(session && !session.safety_ready);
+  const labelEditing = labelPicking || Boolean(labelDraft) || posePicking || switching || Boolean(session && !session.safety_ready) || (mode === "mapping" && !connected);
   useEffect(() => {
     if (labelEditing) {
       stopMotion();
@@ -436,7 +440,7 @@ export default function App() {
           <LabelsPanel store={labelStore} draft={labelDraft} setDraft={setLabelDraft}
             picking={labelPicking} setPicking={setLabelPicking} beginPicking={beginLabelPicking} />
           </div>
-          {mode === "mapping" && !labelPicking && !labelDraft && !posePicking && !switching && (!session || session.safety_ready) && (
+          {activeTab === "mapping" && (
             <div className="controlcard" onKeyDown={event => {
               if (event.target.closest("input")) return;
               if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "w", "W", "s", "S", "a", "A", "d", "D", "q", "Q", "e", "E"].includes(event.key)) {
@@ -446,6 +450,7 @@ export default function App() {
               }
             }}>
               <div className="cardhead"><span>MANUAL DRIVE</span><span>MAPPING ONLY</span></div>
+              {!manualDriveEnabled && <p className="hint" role="status">{switching ? "Switching ROS processes…" : !connected ? "Waiting for ROS connection…" : estop ? "Emergency stop engaged." : mode !== "mapping" ? "Robot idle. Select Mapping to resume driving." : "Waiting for mapping drive services…"}</p>}
               <div className="speed-readout">
                 <span>Speed: lin={linearSpeed.toFixed(1)} m/s &nbsp; ang={angularSpeed.toFixed(1)} rad/s</span>
               </div>
@@ -466,15 +471,15 @@ export default function App() {
                 </div>
               </div>
               <div className="dpad">
-                <DriveButton label="W" name="Forward" keyName="ArrowUp" activeMotion={activeMotion} press={press} />
-                <DriveButton label="A" name="Turn left" keyName="ArrowLeft" activeMotion={activeMotion} press={press} />
+                <DriveButton label="W" name="Forward" keyName="ArrowUp" activeMotion={activeMotion} press={press} disabled={!manualDriveEnabled} />
+                <DriveButton label="A" name="Turn left" keyName="ArrowLeft" activeMotion={activeMotion} press={press} disabled={!manualDriveEnabled} />
                 <DriveButton label="■" name="Stop" keyName="stop" activeMotion={activeMotion} press={stopMotion} />
-                <DriveButton label="D" name="Turn right" keyName="ArrowRight" activeMotion={activeMotion} press={press} />
-                <DriveButton label="S" name="Backward" keyName="ArrowDown" activeMotion={activeMotion} press={press} />
+                <DriveButton label="D" name="Turn right" keyName="ArrowRight" activeMotion={activeMotion} press={press} disabled={!manualDriveEnabled} />
+                <DriveButton label="S" name="Backward" keyName="ArrowDown" activeMotion={activeMotion} press={press} disabled={!manualDriveEnabled} />
               </div>
               <div className="straferow">
-                <DriveButton label="Q ← Strafe" name="Strafe left" keyName="q" activeMotion={activeMotion} press={press} wide />
-                <DriveButton label="Strafe → E" name="Strafe right" keyName="e" activeMotion={activeMotion} press={press} wide />
+                <DriveButton label="Q ← Strafe" name="Strafe left" keyName="q" activeMotion={activeMotion} press={press} wide disabled={!manualDriveEnabled} />
+                <DriveButton label="Strafe → E" name="Strafe right" keyName="e" activeMotion={activeMotion} press={press} wide disabled={!manualDriveEnabled} />
               </div>
               <p className="hint">WASD + QE · +/− speed · SPACE stop · Commands latch until changed</p>
             </div>
@@ -490,8 +495,9 @@ export default function App() {
   );
 }
 
-function DriveButton({ label, name, keyName, activeMotion, press, wide = false }) {
+function DriveButton({ label, name, keyName, activeMotion, press, wide = false, disabled = false }) {
   return <button
+    disabled={disabled}
     className={`hold ${keyName === "stop" ? "stop" : ""} ${activeMotion === keyName ? "selected" : ""} ${wide ? "wide" : ""}`}
     aria-label={name}
     title={name}
