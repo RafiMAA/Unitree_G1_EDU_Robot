@@ -106,10 +106,13 @@ async def pipeline_session(websocket, runtime, language, name, sample_rate, requ
             current, recording = await queue.get()
             if current != generation:
                 continue
+            stage = 'greeting'
+            answer_sent = False
             try:
                 if recording is None:
                     answer = get_airport_introduction(language, name or 'passenger')
                 else:
+                    stage = 'speech recognition'
                     await emit('state', state='Transcribing')
                     transcription = await asyncio.to_thread(stt.transcribe, recording, language=language)
                     if current != generation:
@@ -118,20 +121,24 @@ async def pipeline_session(websocket, runtime, language, name, sample_rate, requ
                         await emit('state', state='Listening'); continue
                     text = transcription.text.strip()
                     await emit('transcript', role='user', id=f'user-{current}', text=text)
+                    stage = 'map context'
                     context = await asyncio.to_thread(request, 'context')
+                    stage = 'airport knowledge / Gemini'
                     await emit('state', state='Retrieving airport knowledge / Gemini')
                     if agent is None:
                         agent = await asyncio.to_thread(runtime.create_agent, lang_code=language, passenger_name=name or None, max_tokens=256)
                     if current != generation:
                         continue
-                    result = await asyncio.to_thread(agent.invoke_guidance, text, context.get('locations', []), context.get('navigation', {}))
+                    result = await asyncio.to_thread(agent.invoke_guidance, text, context.get('locations', []), context.get('navigation', {}), context)
                     if current != generation:
+                        print('Voice reply superseded by microphone speech detection.', flush=True)
                         continue
                     answer = result['answer']
                     if result['action'] == 'cancel':
                         await asyncio.to_thread(request, 'cancel', {})
                         answer = 'Navigation canceled.' if language == 'en' else answer
                     elif result['action'] == 'navigate':
+                        stage = 'navigation'
                         destination = {'map_id': context.get('map_id'), 'location_id': result['location_id']}
                         await emit('state', state='Preparing navigation')
                         try:
@@ -148,10 +155,17 @@ async def pipeline_session(websocket, runtime, language, name, sample_rate, requ
                                 answer = f'Navigation is unavailable: {exc}'
                             else:
                                 answer = result['answer']
-                    await asyncio.to_thread(request, 'transcript', {'text':text,'answer':answer})
+                    # ROS transcript publishing is optional; its failure must not
+                    # suppress the passenger's browser reply.
+                    try:
+                        await asyncio.to_thread(request, 'transcript', {'text':text,'answer':answer})
+                    except Exception as exc:
+                        print(f'ROS transcript publishing failed: {type(exc).__name__}', flush=True)
                 if current != generation:
                     continue
                 await emit('transcript', role='assistant', id=f'assistant-{current}', text=answer)
+                answer_sent = True
+                stage = 'speech synthesis'
                 for sentence in re.split(r'(?<=[.!?。！？])\s+', answer):
                     if not sentence.strip() or current != generation:
                         break
@@ -163,9 +177,18 @@ async def pipeline_session(websocket, runtime, language, name, sample_rate, requ
                 if current == generation:
                     await emit('turn_complete')
             except Exception as exc:
-                print(f'Voice pipeline failed: {type(exc).__name__}', flush=True)
+                print(f'Voice pipeline failed during {stage}: {type(exc).__name__}', flush=True)
                 if current == generation:
-                    await emit('notice', message='This turn could not finish. Check the computer RAG log, API key and speech engines; try speaking again.')
+                    await emit('notice', message=f'This turn failed during {stage} ({type(exc).__name__}). Please try again; details are in the computer RAG log.')
+                    if not answer_sent:
+                        fallback = "I couldn't finish that request. Please try again."
+                        await emit('transcript', role='assistant', id=f'assistant-{current}', text=fallback)
+                        try:
+                            data, mime = await asyncio.to_thread(tts.synthesize_bytes, fallback, language)
+                            if current == generation:
+                                await emit('audio_file', data=base64.b64encode(data).decode(), mime=mime)
+                        except Exception as speech_error:
+                            print(f'Fallback speech failed: {type(speech_error).__name__}', flush=True)
                     await emit('state', state='Listening')
 
     await emit('ready')

@@ -104,6 +104,13 @@ class MapLibrary:
         suffix = Path(image_name).suffix.lower()
         if suffix not in ('.pgm', '.png', '.bmp', '.jpg', '.jpeg'):
             raise ValueError('Supported map images: PGM, PNG, BMP, JPG')
+        if 'yaml_name' in payload:
+            yaml_name = payload['yaml_name']
+            if (not isinstance(yaml_name, str) or Path(yaml_name).name != yaml_name
+                    or '/' in yaml_name or '\\' in yaml_name
+                    or Path(yaml_name).suffix.lower() not in ('.yaml', '.yml')
+                    or Path(yaml_name).stem != Path(image_name).stem):
+                raise ValueError('YAML and image names must match before the extension')
         try:
             data = base64.b64decode(payload.get('image', ''), validate=True)
         except (ValueError, TypeError) as exc:

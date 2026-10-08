@@ -232,7 +232,7 @@ view; use the drive buttons or WASD for robot motion.
 - Slowdown: x from -0.40 to 0.50 m, y from -0.39 to 0.39 m.
 
 Coordinates are relative to `base_footprint`; the stop zone surrounds the padded
-physical footprint. Both costmaps use 1 cm footprint padding, a 0.25 m
+physical footprint. Both costmaps use 1 cm footprint padding, a 0.13 m
 inflation radius and a 6.0 cost scaling factor to reduce the extra corridor
 margin. The self-return mask uses 1 cm padding so it does not hide obstacles
 inside the smaller stop region. Navigation still stops on stale obstacle data. Its final
@@ -246,9 +246,11 @@ preserving its resolution, origin, orientation and unknown cells. The library
 refreshes and selects the saved map. Use a unique output name; existing maps
 are preserved. Saving a loaded static map is disabled.
 
-Under **Import a map from disk**, **Browse map files** accepts the map YAML and
-its referenced image together (Ctrl-click both files). The separate YAML/image
-pickers also work. **Import map** stores the pair; **Import & load** stores it and
+Under **Import a map from disk**, choose the two files separately using
+**1. Map YAML** and **2. Map image**. Their names must match before the extension
+(for example `airport.yaml` and `airport.png`), and the YAML must reference that
+image. The import name is generated automatically; an existing name gets a
+numeric suffix. **Import map** stores the pair; **Import & load** stores it and
 starts AMCL. Imported filenames that already exist receive a suggested copy name.
 Select an imported/saved map, click **Load map**, then place the initial pose.
 **Continue mapping** returns to an existing SLAM session; **New mapping** starts
@@ -286,6 +288,16 @@ Startup:
    collision/velocity controls start automatically for that guidance request;
    RAG remains running. “Stop navigation” cancels guidance. Ending the voice
    session or leaving its tab cancels spoken guidance too.
+
+You can also choose **Conversation map** and click **Load conversation map**
+directly in the RAG tab. End the conversation before changing maps. Loading
+keeps the RAG tab open, stops live SLAM, and starts saved-map localization;
+simulation remains external. The displayed saved destinations come from that
+map's `<map_name>_labels.json`, read again for each spoken turn. FAISS supplies
+airport knowledge; the selected map's label catalog supplies destination IDs
+and coordinates. Use **Set robot pose / edit labels** to open Maps & Localization,
+place the initial pose, and then return to RAG. No saved-map selection means
+the assistant has no saved destination catalog, even when a live SLAM map exists.
 
 `GOOGLE_API_KEY` must be set in `g1-ros2-workspace/.env` or exported before
 starting the UI. Restart after changing it. It stays on the computer.

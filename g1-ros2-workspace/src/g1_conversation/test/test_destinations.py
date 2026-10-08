@@ -69,3 +69,29 @@ def test_contextual_and_multilingual_requests_can_use_model_resolved_name():
 
 def test_cancellation_has_priority_over_destination():
     assert agent_result('Stop navigation to the office',action='cancel')['action']=='cancel'
+
+
+@pytest.mark.parametrize('content', ['Here are directions to the office.', '{"answer": "I can help', ''])
+def test_malformed_guidance_speaks_clarification_without_moving(content):
+    llm = Mock(); llm.invoke.return_value = SimpleNamespace(content=content)
+    retriever = Mock(); retriever.invoke.return_value = []
+    agent = DirectRAGAgent('en', llm, retriever)
+    result = agent.invoke_guidance('Take me to the office', LOCATIONS)
+    assert result['answer'] and result['action'] == 'none'
+    assert result['location_id'] is None
+    assert len(agent.history) == 1
+    kwargs = llm.invoke.call_args.kwargs
+    assert kwargs['response_mime_type'] == 'application/json'
+    assert kwargs['response_json_schema']['properties']['action']['enum'] == ['none', 'navigate', 'cancel']
+    assert kwargs['max_output_tokens'] >= 1024
+
+
+def test_guidance_receives_actual_map_identity_and_saved_catalog():
+    llm = Mock(); llm.invoke.return_value = SimpleNamespace(content=json.dumps({'answer': 'The loaded map is g1_map.', 'action': 'none'}))
+    retriever = Mock(); retriever.invoke.return_value = []
+    agent = DirectRAGAgent('en', llm, retriever)
+    agent.invoke_guidance('Which map are you using?', LOCATIONS, {}, {'map_name': 'g1_map', 'mode': 'localization', 'localized': False})
+    prompt = '\n'.join(message.content for message in llm.invoke.call_args.args[0])
+    assert '"map_name": "g1_map"' in prompt
+    assert '"name": "Office"' in prompt
+    assert 'Never invent a default airport map' in prompt

@@ -84,13 +84,15 @@ class Supervisor:
 
     def rag_context(self):
         from g1_navigation.label_store import LabelStore
-        locations = []
-        if self.mode == 'localization' and self.selected:
-            locations = LabelStore(LIBRARY.directory).load(self.selected['name'])
-        return {'map_id': self.selected['id'] if self.selected else None,
-                'map_name': self.selected['name'] if self.selected else None,
-                'locations': locations, 'localized': self.localized,
-                'navigation': self.navigation_status}
+        with self.lock:
+            locations = []
+            if self.mode == 'localization' and self.selected:
+                locations = LabelStore(LIBRARY.directory).load(self.selected['name'])
+            return {'map_id': self.selected['id'] if self.selected else None,
+                    'map_name': self.selected['name'] if self.selected else None,
+                    'mode': self.mode, 'transitioning': self.transitioning,
+                    'locations': locations, 'localized': self.localized,
+                    'navigation': self.navigation_status}
 
     def spoken_destination(self, payload):
         if self.tab != 'rag' or self.transitioning:
@@ -296,6 +298,8 @@ class Supervisor:
                 tab = 'mapping' if mode == 'mapping' else 'maps'
                 selected = None
                 if mode == 'localization':
+                    if payload.get('tab') == 'rag':
+                        tab = 'rag'
                     path = LIBRARY.resolve(payload.get('map_id'))
                     selected = {'id': str(path), 'name': path.stem}
             elif tab not in ('mapping', 'navigate', 'maps', 'rag'):

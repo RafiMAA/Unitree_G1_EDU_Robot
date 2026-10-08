@@ -69,6 +69,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             trace.append(route)
             if route=='context':return {'map_id':'map.yaml','locations':[{'id':'office','text':'Office'}]}
             if route=='goal':return {'state':'submitted','destination':'Office','message':'Goal submitted'}
+            if route=='transcript':raise ConnectionError('ROS publisher unavailable')
             return {'ready':True}
         with patch('pipeline_rag.SpeechTurns',Turns),patch('g1_conversation.stt_engine.STTEngine',return_value=stt),patch('g1_conversation.tts_engine.TTSEngine',return_value=tts):
             task=asyncio.create_task(pipeline_session(ws,runtime,'en','Passenger',16000,request))
@@ -82,5 +83,32 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(trace[-1],'cancel')
         stt.transcribe.assert_called_once()
         self.assertTrue(any(event['type']=='transcript' and event.get('role')=='user' for event in ws.sent))
+        self.assertTrue(any(event['type']=='transcript' and event.get('role')=='assistant' for event in ws.sent))
+
+    async def test_model_failure_returns_spoken_reply_and_stage_notice(self):
+        from pipeline_rag import pipeline_session
+        from test_live_rag import Socket
+        ws = Socket()
+        class Turns:
+            def __init__(self, *args): pass
+            def feed(self, packet):
+                return [('speech_start', None), ('utterance', np.ones(1000, dtype=np.float32))]
+        stt = Mock(); stt.transcribe.return_value = NS(is_empty=False, text='Where is baggage claim?')
+        tts = Mock(); tts.synthesize_bytes.return_value = (b'fallback-audio', 'audio/mpeg')
+        agent = Mock(); agent.invoke_guidance.side_effect = TimeoutError()
+        runtime = NS(create_agent=Mock(return_value=agent))
+        request = Mock(return_value={'locations': []})
+        with patch('pipeline_rag.SpeechTurns', Turns), patch('g1_conversation.stt_engine.STTEngine', return_value=stt), patch('g1_conversation.tts_engine.TTSEngine', return_value=tts):
+            task = asyncio.create_task(pipeline_session(ws, runtime, 'en', '', 16000, request))
+            await ws.queue.put(b'\x00\x00' * 640)
+            async def wait():
+                while not any(event['type'] == 'audio_file' for event in ws.sent):
+                    await asyncio.sleep(.005)
+            await asyncio.wait_for(wait(), 2)
+            await ws.queue.put(None); await asyncio.wait_for(task, 2)
+        notices = [event['message'] for event in ws.sent if event['type'] == 'notice']
+        self.assertTrue(any('Gemini' in message and 'TimeoutError' in message for message in notices))
+        self.assertTrue(any(event['type'] == 'transcript' and event.get('role') == 'assistant' for event in ws.sent))
+        self.assertFalse(any(event['type'] == 'navigation' for event in ws.sent))
 
 if __name__=='__main__':unittest.main()

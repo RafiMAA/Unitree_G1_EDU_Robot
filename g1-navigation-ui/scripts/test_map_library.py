@@ -34,6 +34,14 @@ class MapLibraryTests(unittest.TestCase):
             self.library.import_map(self.payload)
         self.assertEqual(Path(result['id']).read_bytes(), original)
 
+    def test_browser_upload_requires_matching_yaml_and_image_names(self):
+        for filename in ('other.yaml', 'office.txt', '../office.yaml', None):
+            with self.subTest(filename=filename), self.assertRaisesRegex(ValueError, 'names must match'):
+                self.library.import_map({**self.payload, 'yaml_name': filename})
+        self.assertEqual(list(self.library.directory.iterdir()), [])
+        result = self.library.import_map({**self.payload, 'yaml_name': 'office.yaml'})
+        self.assertEqual(result['name'], 'office')
+
     def test_missing_wrong_image_and_traversal_fail_without_files(self):
         for change in ({'image_name': 'wrong.png'}, {'image': 'not base64'}, {'name': '../outside'}, {'image_name': '../office.png'}):
             with self.subTest(change=change), self.assertRaises(ValueError):

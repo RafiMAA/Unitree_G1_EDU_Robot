@@ -45,7 +45,7 @@ flowchart LR
   conversation text on ROS.
 - Simulation remains a separate process. Spoken requests launch only the Nav2
   and safety processes needed for guidance after a saved map is localized.
-  The existing 0.25 m inflation radius and navigation collision controls remain.
+  Both costmaps use a 0.13 m inflation radius with navigation collision controls.
 
 Use **Maps & Localization** to load/import a map, set the initial pose with an
 arrow, and save named labels. Then start the RAG conversation and explicitly

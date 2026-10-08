@@ -418,7 +418,7 @@ export default function App() {
         <button className={`estop ${estop ? "engaged" : ""}`} onClick={toggleEstop}>{estop ? "Release E-stop" : "Emergency stop"}</button>
       </section>
 
-      {activeTab === "rag" && <RagPanel navigationStatus={status} />}
+      {activeTab === "rag" && <RagPanel navigationStatus={status} consoleSession={consoleSession} onOpenMaps={() => selectTab("maps")} />}
       <section className="workspace" hidden={activeTab === "rag"}>
         <div className="mapcard">
           <div className="cardhead"><span>LIVE OCCUPANCY MAP</span><span>{map ? `${map.info.width} × ${map.info.height} · ${map.info.resolution.toFixed(2)} m/cell` : "WAITING FOR /map"}</span></div>

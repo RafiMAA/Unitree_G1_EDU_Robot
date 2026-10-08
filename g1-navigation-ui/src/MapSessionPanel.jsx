@@ -15,7 +15,7 @@ export default function MapSessionPanel({ consoleSession, onSwitch, posePicking,
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const yamlInput = useRef(null), imageInput = useRef(null), filesInput = useRef(null);
+  const yamlInput = useRef(null), imageInput = useRef(null);
   const knownMaps = useRef(new Set());
   const loadedMap = useRef(null);
   useEffect(() => {
@@ -36,14 +36,9 @@ export default function MapSessionPanel({ consoleSession, onSwitch, posePicking,
     while (names.has(candidate)) candidate = `${base}_${suffix++}`;
     return candidate;
   };
-  const chooseFiles = event => {
-    const files = Array.from(event.target.files || []);
-    const metadata = files.find(file => /\.ya?ml$/i.test(file.name));
-    const asset = files.find(file => /\.(pgm|png|bmp|jpe?g)$/i.test(file.name));
-    if (metadata) { setYaml(metadata); setName(availableName(metadata.name)); }
-    if (asset) setImage(asset);
-    setMessage(metadata && asset ? `Selected ${metadata.name} and ${asset.name}. Click Import & load.` : "Select both the map YAML and its referenced image (Ctrl-click to select two files).");
-  };
+  const pairMatches = Boolean(yaml && image && /\.ya?ml$/i.test(yaml.name)
+    && /\.(pgm|png|bmp|jpe?g)$/i.test(image.name)
+    && yaml.name.replace(/\.[^.]+$/, "") === image.name.replace(/\.[^.]+$/, ""));
   const run = async task => {
     setBusy(true); setMessage("");
     try { await task(); } catch (err) { setMessage(err.message); }
@@ -51,11 +46,12 @@ export default function MapSessionPanel({ consoleSession, onSwitch, posePicking,
   };
   const importMap = (load = false) => run(async () => {
     if (!yaml || !image) throw new Error("Select the map YAML and its referenced image");
+    if (!pairMatches) throw new Error("YAML and image must have the same name before the extension (for example airport.yaml and airport.png).");
     if (yaml.size > 100000 || image.size > 20 * 1024 * 1024) throw new Error("Maximum: 100 KB YAML and 20 MB image");
-    const result = await request("/api/maps/import", { name: name.trim(), yaml: await yaml.text(), image_name: image.name, image: await readBase64(image) });
+    const result = await request("/api/maps/import", { name: name.trim(), yaml_name: yaml.name, yaml: await yaml.text(), image_name: image.name, image: await readBase64(image) });
     setSelected(result.id);
     setYaml(null); setImage(null);
-    yamlInput.current.value = ""; imageInput.current.value = ""; filesInput.current.value = "";
+    yamlInput.current.value = ""; imageInput.current.value = "";
     setMessage(`Imported ${result.name}. Click Load map to localize.`);
     if (load) { await onSwitch("localization", result.id); setMessage(`Loading ${result.name}…`); }
   });
@@ -77,13 +73,13 @@ export default function MapSessionPanel({ consoleSession, onSwitch, posePicking,
     <button className={posePicking ? "active" : ""} disabled={!canPose || busy} onClick={onPoseTool}>{posePicking ? "Cancel initial pose" : "2D Pose Estimate"}</button>
     <p className="hint">Click and drag on free space: start = position, arrow = heading. Release to set the estimate.</p>
     <details><summary>Import a map from disk</summary>
-      <label>Browse map files (YAML + image)<input aria-label="Browse map files" ref={filesInput} type="file" multiple accept=".yaml,.yml,.pgm,.png,.bmp,.jpg,.jpeg" disabled={unavailable} onChange={chooseFiles} /></label>
-      {(yaml || image) && <p className="hint">YAML: {yaml?.name || "not selected"} · Image: {image?.name || "not selected"}</p>}
-      <label>Map YAML<input ref={yamlInput} type="file" accept=".yaml,.yml" onChange={event => { const file = event.target.files[0]; setYaml(file || null); if (file) setName(availableName(file.name)); }} /></label>
-      <label>Referenced image<input ref={imageInput} type="file" accept=".pgm,.png,.bmp,.jpg,.jpeg" onChange={event => setImage(event.target.files[0] || null)} /></label>
-      <label>Map name<input value={name} onChange={event => setName(event.target.value)} /></label>
-      <button disabled={unavailable || !yaml || !image || !name.trim()} onClick={() => importMap(false)}>Import map</button>
-      <button disabled={unavailable || !yaml || !image || !name.trim()} onClick={() => importMap(true)}>Import & load</button>
+      <label>1. Map YAML<input ref={yamlInput} type="file" accept=".yaml,.yml" disabled={unavailable} onChange={event => { const file = event.target.files[0]; setYaml(file || null); setMessage(""); setName(file ? availableName(file.name) : ""); }} /></label>
+      <label>2. Map image<input ref={imageInput} type="file" accept=".pgm,.png,.bmp,.jpg,.jpeg" disabled={unavailable} onChange={event => { setImage(event.target.files[0] || null); setMessage(""); }} /></label>
+      <p className="hint">Choose both files with the same name, for example airport.yaml and airport.png. The YAML must reference the selected image.</p>
+      {yaml && image && !pairMatches && <p className="labelerror" role="alert">YAML and image names must match before the extension.</p>}
+      {yaml && <p className="hint">Import name: {name}</p>}
+      <button disabled={unavailable || !pairMatches || !name.trim()} onClick={() => importMap(false)}>Import map</button>
+      <button disabled={unavailable || !pairMatches || !name.trim()} onClick={() => importMap(true)}>Import & load</button>
       <p className="hint">Imports preserve the map resolution and origin. Existing files are never overwritten.</p>
     </details>
     {message && <p className="labelnotice" role="status">{message}</p>}

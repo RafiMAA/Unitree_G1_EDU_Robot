@@ -82,6 +82,40 @@ class TabTests(unittest.TestCase):
             self.console.switch({'tab': 'navigate'})
         self.assertEqual(self.console.processes, {})
 
+    def test_conversation_can_load_saved_map_without_leaving_rag_or_starting_nav(self):
+        from pathlib import Path
+        c = self.console
+        c.tab, c.mode = 'rag', 'mapping'
+        c.map = object()
+        worker = c.processes['rag'] = object()
+        with patch('console_server.LIBRARY.resolve', return_value=Path('/maps/g1_map.yaml')), patch.object(c, 'ensure_rag'):
+            self.switch({'mode': 'localization', 'map_id': 'g1_map', 'tab': 'rag'})
+        self.assertEqual(c.tab, 'rag')
+        self.assertEqual(c.mode, 'localization')
+        self.assertEqual(c.selected['name'], 'g1_map')
+        self.assertIs(c.processes['rag'], worker)
+        self.assertFalse(c.localized)
+        self.assertNotIn('stack_nav', c.processes)
+        self.assertNotIn('safety', c.processes)
+        self.assertIn('start_sim:=false', self.commands['stack'])
+
+    def test_rag_context_reads_only_selected_map_labels(self):
+        import tempfile
+        from pathlib import Path
+        from g1_navigation.label_store import LabelStore
+        c = self.console
+        c.navigation_status = {'state': 'idle'}
+        with tempfile.TemporaryDirectory() as directory, patch('console_server.LIBRARY.directory', Path(directory)):
+            LabelStore(directory).save('g1_map', [{'id': 'office', 'text': 'office', 'x': 1., 'y': 2.}])
+            c.mode, c.selected = 'localization', {'id': '/maps/g1_map.yaml', 'name': 'g1_map'}
+            self.assertEqual(c.rag_context()['locations'][0]['text'], 'office')
+            self.assertEqual(c.rag_context()['map_name'], 'g1_map')
+            c.selected = {'id': '/maps/other.yaml', 'name': 'other'}
+            self.assertEqual(c.rag_context()['locations'], [])
+            c.mode, c.selected = 'mapping', None
+            self.assertIsNone(c.rag_context()['map_name'])
+            self.assertEqual(c.rag_context()['locations'], [])
+
     def test_rag_starts_only_conversation_and_stops_on_other_tab(self):
         c = self.console
         with patch.object(c, 'ensure_rag', side_effect=lambda: c.spawn('rag', ['conversation'])):
