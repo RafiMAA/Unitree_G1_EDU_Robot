@@ -144,6 +144,10 @@ class STTEngine:
         TranscriptionResult
             Contains text, detected language, and confidence score.
         """
+        from g1_core.guide_behavior import CONFIG
+        cfg = CONFIG['speech']
+        if len(audio) < 16000*.15 or float(np.sqrt(np.mean(np.asarray(audio, dtype=np.float32)**2))) < cfg['minimum_rms']:
+            return TranscriptionResult(text='', language=language or 'en', confidence=-2., is_empty=True)
         self.load()
 
         if self.backend == "faster-whisper":
@@ -154,7 +158,8 @@ class STTEngine:
                 best_of=1,
                 temperature=0.0,
                 condition_on_previous_text=False,
-                vad_filter=False,
+                vad_filter=True,
+                vad_parameters={'min_speech_duration_ms': 150, 'min_silence_duration_ms': 200, 'speech_pad_ms': 150},
             )
             segments = list(segments_iter)
             text = " ".join(segment.text.strip() for segment in segments).strip()
@@ -165,9 +170,9 @@ class STTEngine:
             no_speech_prob = max(
                 (segment.no_speech_prob for segment in segments), default=1.0
             )
-            is_empty = len(text) < 2 or (
-                no_speech_prob > 0.7 and avg_logprob < -1.0
-            )
+            is_empty = (len(text) < 2 or no_speech_prob > cfg['maximum_no_speech']
+                        or avg_logprob < cfg['minimum_logprob']
+                        or any(getattr(segment, 'compression_ratio', 0.) > 2.4 for segment in segments))
             return TranscriptionResult(
                 text=text,
                 language=info.language or language or "en",
@@ -207,10 +212,9 @@ class STTEngine:
             no_speech_prob = 1.0
 
         # Filter out noise / empty transcriptions
-        # Do not discard useful speech merely because one confidence signal is
-        # weak. Treat it as noise only when both Whisper signals agree.
+        # Reject likely silence or low confidence before publishing a passenger turn.
         confidence_indicates_noise = (
-            no_speech_prob > 0.7 and avg_logprob < -1.0
+            no_speech_prob > cfg['maximum_no_speech'] or avg_logprob < cfg['minimum_logprob']
         )
         is_empty = len(text) < 2 or confidence_indicates_noise
 

@@ -7,6 +7,7 @@ import rclpy
 from geometry_msgs.msg import Twist
 from lifecycle_msgs.srv import GetState
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
@@ -61,7 +62,7 @@ def retreat_velocity(points, vx, vy, wz, speed_limit=0.10):
 class RetreatGuard(Node):
     def __init__(self):
         super().__init__('g1_retreat_guard')
-        self.mode = 'mapping'
+        self.mode = 'idle'
         self.estop = False
         self.request = Twist()
         self.monitored = Twist()
@@ -82,6 +83,8 @@ class RetreatGuard(Node):
         self.create_subscription(Twist, '/cmd_vel_collision', lambda m: self.receive('monitored', m), 10)
         self.create_subscription(PointCloud2, '/g1/mid360/points_filtered', self.on_cloud, qos_profile_sensor_data)
         self.create_subscription(String, '/ui/mode', self.on_mode, 10)
+        mode_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.RELIABLE)
+        self.create_subscription(String, '/ui/mode', self.on_mode, mode_qos)
         self.create_subscription(Bool, '/ui/emergency_stop', self.on_estop, 10)
         self.create_timer(0.05, self.tick)
 
@@ -110,6 +113,8 @@ class RetreatGuard(Node):
         self.stamps[name] = self.now()
 
     def on_mode(self, msg):
+        if self.mode == msg.data:
+            return
         self.mode = msg.data
         self.last_status = None
         self.request = self.monitored = Twist()

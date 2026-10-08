@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small browser-facing adapter for Nav2 goals, cancellation and status."""
+"""Small browser-facing adapter for A* navigator goals, cancellation and status."""
 
 import json
 
@@ -9,17 +9,19 @@ from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, String
 from tf2_ros import Buffer, TransformException, TransformListener
 
 
 class WebGateway(Node):
-    """Validate UI mode and translate PoseStamped messages to Nav2 actions."""
+    """Validate UI mode and translate PoseStamped messages to A* navigator actions."""
 
     def __init__(self):
         super().__init__('g1_web_gateway')
         self.mode = 'mapping'
         self.goal_handle = None
+        self.goal_generation = 0
         self.action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.status_pub = self.create_publisher(String, '/ui/navigation_status', 10)
         self.pose_pub = self.create_publisher(PoseStamped, '/ui/robot_pose', 10)
@@ -27,6 +29,8 @@ class WebGateway(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.create_subscription(PoseStamped, '/ui/goal', self.on_goal, 10)
         self.create_subscription(String, '/ui/mode', self.on_mode, 10)
+        mode_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.RELIABLE)
+        self.create_subscription(String, '/ui/mode', self.on_mode, mode_qos)
         self.create_subscription(Bool, '/ui/cancel_navigation', self.on_cancel, 10)
         self.create_timer(0.10, self.publish_robot_pose)
         self.publish_status('idle', 'Gateway ready')
@@ -63,6 +67,7 @@ class WebGateway(Node):
             self.cancel_active_goal()
 
     def cancel_active_goal(self):
+        self.goal_generation += 1
         if self.goal_handle is not None:
             self.goal_handle.cancel_goal_async()
             self.goal_handle = None
@@ -76,32 +81,39 @@ class WebGateway(Node):
             self.publish_status('rejected', 'Goal frame must be map')
             return
         if not self.action_client.server_is_ready():
-            self.publish_status('unavailable', 'Nav2 action server is not ready')
+            self.publish_status('unavailable', 'A* navigator action server is not ready')
             return
         self.cancel_active_goal()
+        generation = self.goal_generation
         goal = NavigateToPose.Goal()
         goal.pose = pose
         future = self.action_client.send_goal_async(
-            goal, feedback_callback=self.on_feedback
+            goal, feedback_callback=lambda msg: self.on_feedback(msg, generation)
         )
-        future.add_done_callback(self.on_goal_response)
-        self.publish_status('sending', 'Sending goal to Nav2')
+        future.add_done_callback(lambda result: self.on_goal_response(result, generation))
+        self.publish_status('sending', 'Sending goal to A* navigator')
 
-    def on_goal_response(self, future):
+    def on_goal_response(self, future, generation):
         try:
             handle = future.result()
+            if generation != self.goal_generation:
+                if handle.accepted:
+                    handle.cancel_goal_async()
+                return
         except Exception as exc:  # rclpy action transport failure
             self.publish_status('failed', f'Goal request failed: {exc}')
             return
         if not handle.accepted:
-            self.publish_status('rejected', 'Nav2 rejected the goal')
+            self.publish_status('rejected', 'A* navigator rejected the goal')
             return
         self.goal_handle = handle
         result_future = handle.get_result_async()
-        result_future.add_done_callback(self.on_result)
+        result_future.add_done_callback(lambda result: self.on_result(result, generation))
         self.publish_status('navigating', 'Goal accepted')
 
-    def on_feedback(self, feedback):
+    def on_feedback(self, feedback, generation):
+        if generation != self.goal_generation:
+            return
         value = feedback.feedback
         self.publish_status(
             'navigating',
@@ -113,7 +125,9 @@ class WebGateway(Node):
             },
         )
 
-    def on_result(self, future):
+    def on_result(self, future, generation):
+        if generation != self.goal_generation:
+            return
         try:
             wrapped = future.result()
             status = int(wrapped.status)

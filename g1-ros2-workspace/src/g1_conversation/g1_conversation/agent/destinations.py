@@ -23,14 +23,14 @@ def normalize(value):
 def requested_place(question):
     """Extract names from common English wayfinding phrases; Gemini handles others."""
     match = re.search(
-        r'\b(?:take me to|navigate to|guide me to|lead me to|escort me to|show me(?: the way)? to|'
+        r'\b(?:take me(?: to)?|navigate(?: me)? to|guide me to|lead me to|escort me to|show me(?: the way)? to|'
         r'bring me to|walk me to|go to|where (?:is|are)|where can i find|how (?:do|can) i get to|'
         r'can you (?:find|show me)|i (?:want|need|would like) to (?:go to|reach|find)|i (?:need|want) to find)\s+(?:the\s+|a\s+|an\s+)?(.+)',
         question, re.I,
     )
     if not match:
         return None
-    text = re.sub(r'\s+(?:please|thank you|thanks)\s*[?.!]*$', '', match.group(1), flags=re.I)
+    text = re.sub(r'\s+(?:please|thank you|thanks)\s*[?.!]*$', '', re.split(r'[?!.;]', match.group(1), maxsplit=1)[0], flags=re.I)
     text = re.split(r'\s+(?:because|since|from here|I am|I have|I need to|I want to)\b', text, maxsplit=1, flags=re.I)[0]
     text = re.sub(r'^(?:nearest|closest)\s+', '', text, flags=re.I)
     text = text.strip(' ?.!,')

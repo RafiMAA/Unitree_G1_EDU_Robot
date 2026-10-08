@@ -1,4 +1,4 @@
-"""Opt-in isolated A* navigation heading check with synthetic sensors and kinematics.
+"""Opt-in guide profile check: real ROS action/feedback, synthetic sensors and kinematics.
 
 Run after sourcing ROS and the workspace. Uses domain 98 and launches no robot.
 """
@@ -8,13 +8,14 @@ os.environ['ROS_LOCALHOST_ONLY'] = '1'
 import math, signal, subprocess, time
 from pathlib import Path
 import rclpy
+from g1_core.guide_behavior import CONFIG
 from rclpy.action import ActionClient
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
-from geometry_msgs.msg import TransformStamped, Twist
+from geometry_msgs.msg import TransformStamped, Twist, PoseStamped
 from nav_msgs.msg import OccupancyGrid, Odometry
 from nav2_msgs.action import NavigateToPose
 from lifecycle_msgs.srv import GetState, ChangeState
-from std_srvs.srv import Trigger
+from std_srvs.srv import Trigger, SetBool
 from std_msgs.msg import Header, String
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py.point_cloud2 import create_cloud_xyz32
@@ -24,10 +25,10 @@ ROOT=Path(__file__).resolve().parents[3]
 PARAMS=ROOT/'src/g1_navigation/config/nav2_params.yaml'
 procs=[];logs=[]
 def launch(command,name):
-    log=open('/tmp/g1-heading-'+name+'.log','w');logs.append(log)
+    log=open('/tmp/g1-guide-'+name+'.log','w');logs.append(log)
     p=subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT,start_new_session=True);procs.append(p)
     return p
-rclpy.init();node=rclpy.create_node('path_heading_check')
+rclpy.init();node=rclpy.create_node('guide_escort_check')
 def spin(seconds):
     end=time.monotonic()+seconds
     while time.monotonic()<end:rclpy.spin_once(node,timeout_sec=.03)
@@ -55,6 +56,10 @@ try:
     qos=QoSProfile(depth=1,durability=DurabilityPolicy.TRANSIENT_LOCAL,reliability=ReliabilityPolicy.RELIABLE)
     map_pub=node.create_publisher(OccupancyGrid,'/map',qos)
     cloud_pub=node.create_publisher(PointCloud2,'/g1/mid360/points_filtered',10)
+    user_pub=node.create_publisher(PoseStamped, '/g1/user_pose', 10)
+    statuses=[]
+    import json
+    node.create_subscription(String, '/g1/guide_status', lambda msg: statuses.append(json.loads(msg.data)), 10)
     odom_pub=node.create_publisher(Odometry,'/g1/odom',10)
     mode_pub=node.create_publisher(String,'/ui/mode',qos)
     robot=[2.,4.,0.]; commanded=Twist(); safe=Twist(); moving=False; blocked=False; tracking=[]; violation=[]; timings={}; last=time.monotonic()
@@ -90,6 +95,8 @@ try:
             if not .5<=side<=7.5:violation.append((x,y,theta,side))
         stamp=node.get_clock().now().to_msg()
         grid.header.stamp=stamp;map_pub.publish(grid)
+        user=PoseStamped();user.header.frame_id='map';user.header.stamp=stamp
+        user.pose.position.x=2.;user.pose.position.y=2.;user.pose.orientation.w=1.;user_pub.publish(user)
         points=[((px-x)*c+(py-y)*s,-(px-x)*s+(py-y)*c,pz) for px,py,pz in wall_points]
         cloud_pub.publish(create_cloud_xyz32(Header(stamp=stamp,frame_id='base_footprint'),points))
         tf=TransformStamped();tf.header.frame_id='odom';tf.child_frame_id='base_footprint';tf.header.stamp=stamp
@@ -117,6 +124,7 @@ try:
     launch(['ros2','run','g1_navigation','retreat_guard'],'guard')
     deadline=time.monotonic()+10
     while mode_pub.get_subscription_count()<4 and time.monotonic()<deadline:spin(.1)
+    assert service(SetBool, '/g1_astar/guide_profile', SetBool.Request(data=True)).success
     mode_pub.publish(String(data='navigate'));spin(1.)
     nav=ActionClient(node,NavigateToPose,'/navigate_to_pose');assert nav.wait_for_server(timeout_sec=5)
     goal=NavigateToPose.Goal();goal.pose.header.frame_id='map';goal.pose.header.stamp=node.get_clock().now().to_msg()
@@ -124,7 +132,7 @@ try:
     timings["goal"]=time.monotonic()
     handle=wait(nav.send_goal_async(goal));assert handle.accepted
     result=handle.get_result_async();moving=True
-    deadline=time.monotonic()+45
+    deadline=time.monotonic()+60
     while not result.done() and time.monotonic()<deadline:spin(.1)
     assert result.done(),('Heading goal stalled',robot)
     assert result.result().status==4,('Goal failed',result.result().status,robot)
@@ -133,10 +141,12 @@ try:
     first=next(item for item in tracking if item[0]>.03)
     assert abs(first[3]-math.pi/2)<.22,('Did not turn before advancing',first)
     assert timings['motion']-timings['goal'] < 1.5, 'Guarded motion started too late'
-    assert timings['forward']-timings['goal'] < 3.2, '90-degree alignment took too long'
-    assert max(item[0] for item in tracking) > .50, 'Open-space walking stayed too slow'
+    assert any(s['state']=='facing_user' for s in statuses), 'Passenger-facing stage missing'
+    assert max(item[0] for item in tracking) <= CONFIG['walking']['linear'] + .001, 'Guide linear speed exceeded'
+    assert max(abs(item[2]) for item in tracking) <= CONFIG['walking']['angular'] + .001, 'Guide turning speed exceeded'
+    assert statuses[-1]['state']=='succeeded' and statuses[-1]['goal']=={'x':2.,'y':6.}, statuses[-1]
     print("Timing/speeds: first guarded motion %.2fs, forward walking %.2fs, peak forward %.2fm/s, peak turn %.2frad/s" % (timings["motion"]-timings["goal"],timings["forward"]-timings["goal"],max(item[0] for item in tracking),max(abs(item[2]) for item in tracking)),flush=True)
-    print('PASS: turned toward 90-degree path before translating, reached goal without strafe/reverse; first forward heading:',first[3], 'final pose:',robot,flush=True)
+    print('PASS: faced passenger, then turned toward 90-degree path before translating, reached goal without strafe/reverse; first forward heading:',first[3], 'final pose:',robot,flush=True)
 finally:
     for p in procs:
         if p.poll() is None:os.killpg(p.pid,signal.SIGINT)

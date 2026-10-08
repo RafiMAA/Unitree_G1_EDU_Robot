@@ -16,7 +16,8 @@ from rclpy.node import Node
 from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState, Imu
-from std_msgs.msg import Float64MultiArray
+from std_msgs.msg import Float64MultiArray, String
+from g1_core.guide_behavior import GesturePlayer
 from tf2_ros import TransformBroadcaster
 
 from .joint_names import ACTUATOR_ORDER
@@ -136,6 +137,7 @@ class MujocoBridge(Node):
 
         self._last_sim_time = 0.0
         self._external_cmd_received = False
+        self.gesture = GesturePlayer()
 
         # Set initial pose
         self._reset_pose()
@@ -178,6 +180,8 @@ class MujocoBridge(Node):
         self.cmd_sub = self.create_subscription(
             Float64MultiArray, "g1/joint_cmd", self.on_cmd, 10
         )
+
+        self.create_subscription(String, 'g1/gesture_command', self.on_gesture, 10)
 
         # Physics sub-stepping: run N_SUBSTEPS of mj_step per policy tick.
         # The RL policy runs at 50 Hz (0.02 s).  The model timestep is 0.002 s,
@@ -278,6 +282,13 @@ class MujocoBridge(Node):
     # ------------------------------------------------------------------
     # Simulation step — runs N sub-steps of mj_step per policy tick
     # ------------------------------------------------------------------
+    def on_gesture(self, msg):
+        # The core overlays gestures once the RL policy owns the joints. Before
+        # walking starts, animate arms/waist here with stable fixed-stand gains.
+        with self.state_lock:
+            if not self._external_cmd_received:
+                self.gesture.play_gesture(msg.data)
+
     def step_sim(self):
         with self.state_lock:
             # Detect MuJoCo viewer reset (time jumps backwards)
@@ -289,6 +300,9 @@ class MujocoBridge(Node):
                 mujoco.mj_forward(self.model, self.data)
 
             self._last_sim_time = self.data.time
+
+            if not self._external_cmd_received:
+                self.data.ctrl[:] = self.gesture.apply(np.array(DEFAULT_POS, dtype=float))
 
             # Run exactly N physics sub-steps per policy tick, matching how the
             # RL policy was trained (10 × 0.002 s = 0.02 s per policy step).

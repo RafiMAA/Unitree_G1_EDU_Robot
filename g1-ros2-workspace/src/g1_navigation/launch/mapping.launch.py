@@ -8,26 +8,18 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-
 def generate_launch_description():
     nav_share = get_package_share_directory('g1_navigation')
     start_sim = LaunchConfiguration('start_sim')
     start_slam = LaunchConfiguration('start_slam')
     use_sim_time = LaunchConfiguration('use_sim_time')
     slam_params = os.path.join(nav_share, 'config', 'slam_mapping.yaml')
-    nav_params = os.path.join(nav_share, 'config', 'nav2_params.yaml')
+    astar_params = os.path.join(nav_share, 'config', 'astar_params.yaml')
 
     start_nav = LaunchConfiguration('start_nav')
     start_web = LaunchConfiguration('start_web')
     cmd_vel_topic = LaunchConfiguration('cmd_vel_topic')
 
-    nav_lifecycle_nodes = [
-        'controller_server',
-        'smoother_server',
-        'planner_server',
-        'behavior_server',
-        'bt_navigator',
-    ]
     common = {'use_sim_time': use_sim_time}
 
     return LaunchDescription(
@@ -36,7 +28,7 @@ def generate_launch_description():
             DeclareLaunchArgument('start_slam', default_value='true'),
             DeclareLaunchArgument('start_nav', default_value='true'),
             DeclareLaunchArgument('start_web', default_value='true'),
-            DeclareLaunchArgument('cmd_vel_topic', default_value='/cmd_vel_teleop'),
+            DeclareLaunchArgument('cmd_vel_topic', default_value='/cmd_vel_controller'),
             DeclareLaunchArgument('use_sim_time', default_value='false'),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
@@ -48,6 +40,7 @@ def generate_launch_description():
                 ),
                 launch_arguments={
                     'start_rosbridge': 'false',
+                    'cmd_vel_topic': '/cmd_vel_safe',
                 }.items(),
                 condition=IfCondition(start_sim),
             ),
@@ -74,61 +67,12 @@ def generate_launch_description():
                 condition=IfCondition(start_slam),
                 parameters=[slam_params, {'use_sim_time': use_sim_time}],
             ),
-            # --- Navigation Stack (SLAM-Based) ---
+            # A* navigation is independent of the SLAM process.
+
             Node(
-                package='nav2_controller',
-                executable='controller_server',
-                name='controller_server',
-                output='screen',
-                condition=IfCondition(start_nav),
-                parameters=[nav_params, common],
-                remappings=[('cmd_vel', cmd_vel_topic)],
-            ),
-            Node(
-                package='nav2_smoother',
-                executable='smoother_server',
-                name='smoother_server',
-                output='screen',
-                condition=IfCondition(start_nav),
-                parameters=[nav_params, common],
-            ),
-            Node(
-                package='nav2_planner',
-                executable='planner_server',
-                name='planner_server',
-                output='screen',
-                condition=IfCondition(start_nav),
-                parameters=[nav_params, common],
-            ),
-            Node(
-                package='nav2_behaviors',
-                executable='behavior_server',
-                name='behavior_server',
-                output='screen',
-                condition=IfCondition(start_nav),
-                parameters=[nav_params, common],
-                remappings=[('cmd_vel', cmd_vel_topic)],
-            ),
-            Node(
-                package='nav2_bt_navigator',
-                executable='bt_navigator',
-                name='bt_navigator',
-                output='screen',
-                condition=IfCondition(start_nav),
-                parameters=[nav_params, common, {'default_nav_to_pose_bt_xml': os.path.join(
-                    nav_share, 'behavior_trees', 'navigate_with_clearance_recovery.xml')}],
-            ),
-            Node(
-                package='nav2_lifecycle_manager',
-                executable='lifecycle_manager',
-                name='lifecycle_manager_navigation',
-                output='screen',
-                condition=IfCondition(start_nav),
-                parameters=[
-                    {'use_sim_time': use_sim_time},
-                    {'autostart': True},
-                    {'node_names': nav_lifecycle_nodes},
-                ],
+                package='g1_navigation', executable='astar_navigator', name='g1_astar',
+                output='screen', condition=IfCondition(start_nav),
+                parameters=[astar_params, common, {'cmd_vel_topic': cmd_vel_topic}],
             ),
         ]
     )

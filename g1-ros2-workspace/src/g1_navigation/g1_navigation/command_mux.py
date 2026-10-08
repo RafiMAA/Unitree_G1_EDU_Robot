@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Mode-aware, timeout-safe arbitration of browser teleop and Nav2 commands."""
+"""Mode-aware, timeout-safe arbitration of browser teleop and navigation commands."""
 
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, String
 
 
@@ -22,7 +23,7 @@ class CommandMux(Node):
         )
         self.nav_timeout = float(self.declare_parameter('nav_timeout', 0.50).value)
         publish_rate = float(self.declare_parameter('publish_rate', 30.0).value)
-        self.mode = self.declare_parameter('initial_mode', 'mapping').value
+        self.mode = self.declare_parameter('initial_mode', 'idle').value
         self.estop = False
         self.last_teleop = Twist()
         self.last_nav = Twist()
@@ -33,6 +34,8 @@ class CommandMux(Node):
         self.create_subscription(Twist, '/cmd_vel_teleop', self.on_teleop, 10)
         self.create_subscription(Twist, '/cmd_vel_controller', self.on_nav, 10)
         self.create_subscription(String, '/ui/mode', self.on_mode, 10)
+        mode_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.RELIABLE)
+        self.create_subscription(String, '/ui/mode', self.on_mode, mode_qos)
         self.create_subscription(Bool, '/ui/emergency_stop', self.on_estop, 10)
         self.create_timer(1.0 / publish_rate, self.publish_selected)
         self.get_logger().info(f'Command mux ready; initial mode={self.mode}')

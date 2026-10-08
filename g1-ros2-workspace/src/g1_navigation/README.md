@@ -1,99 +1,58 @@
-# G1 2D Mapping and Navigation
+# G1 2D Mapping and A* Navigation
 
-This package connects the simulated Unitree G1 locomotion controller to SLAM
-Toolbox and Nav2. It provides:
+The console uses SLAM Toolbox for mapping, AMCL for saved-map localization, and
+standalone A* plus lookahead/P-heading control for navigation. The planner follows
+[RafiMAA's Qbot architecture](https://github.com/RafiMAA/Qbot_mapping_and_navigating_to_the_goal)
+with G1-specific full-body checks, live obstacle replanning and bounded recovery.
+It runs no Nav2 planning, control or behavior servers. The existing ROS
+`NavigateToPose` action type is retained for browser/voice compatibility.
 
-- A planar `map -> odom -> base_footprint -> pelvis -> mid360_link` TF chain.
-- A filtered 2D `/scan` for SLAM while preserving the live PointCloud2 for
-  Nav2's voxel costmap and Collision Monitor.
-- Mode-aware command arbitration, smoothing, stale-command stops and a final
-  `/cmd_vel_safe` command topic.
-- A browser gateway for Nav2 `NavigateToPose` goals and status.
-
-## Build
+Build from the workspace (ROS Humble):
 
 ```bash
-cd /path/to/Unitree_G1/g1-ros2-workspace
-source /opt/ros/jazzy/setup.bash
+unset PYTHONPATH
+export PYTHONNOUSERSITE=1
+source /opt/ros/humble/setup.bash
 colcon build --symlink-install --packages-select g1_core g1_mujoco g1_navigation
 source install/setup.bash
 ```
 
-## Create the initial map
+Start the simulator separately using `g1_mujoco sim.launch.py` with
+`start_rosbridge:=false cmd_vel_topic:=/cmd_vel_safe`. Then run `npm run dev` in
+`g1-navigation-ui`. Mapping, Navigate, Maps & Localization and voice navigation
+start their own processes only when selected. Do not also launch duplicate stacks
+in another terminal. Load a saved map and set the actual robot pose with the
+2D Pose Estimate arrow before navigating with AMCL.
 
-```bash
-ros2 launch g1_navigation mapping.launch.py
-```
+Navigation parameters: `config/astar_params.yaml`:
 
-Start the React application in another terminal:
+- Inflation radius **0.25 m**, forward limit **0.65 m/s**, turn limit **1 rad/s**.
+- Eight-connected A*, no corner cutting or unknown-space traversal.
+- Lookahead **0.6 m**, turn before walking, apply the goal orientation on arrival.
+- Full padded body checks on the map and live LiDAR; collision monitoring and
+  velocity smoothing remain separate safety components.
+- Replan once per second; after 3 seconds without progress, try a 30 cm backup
+  at 0.15 m/s and replan the same goal, with four bounded attempts.
 
-```bash
-cd /path/to/Unitree_G1/g1-navigation-ui
-npm install
-npm run dev
-```
+`config/nav2_params.yaml` contains only shared map-server, AMCL, velocity smoother
+and Collision Monitor settings. Those components retain their upstream names.
+`behavior_trees/` contains historical Nav2 configuration; it is not launched.
 
-Open `http://localhost:5173`, select **Mapping**, and use the arrow keys or
-WASD. Q/E commands lateral walking. Enter an absolute output path before
-pressing **Save**, for example:
+Interfaces:
 
-```text
-/path/to/Unitree_G1/g1-ros2-workspace/src/g1_navigation/maps/g1_map
-```
+- `/map`, `/g1/mid360/points_filtered` in `base_footprint`, fresh TF
+  `map -> odom -> base_footprint` are required.
+- `/navigate_to_pose`: existing action contract, implemented by `g1_astar`.
+- `/g1_astar/ready`: `std_srvs/srv/Trigger` readiness check.
+- `/plan`: browser path; `/ui/goal`: browser or saved-location pose.
+- `/cmd_vel_controller` enters mux, smoother, monitor and final guard;
+  `/cmd_vel_safe` is the robot input.
+- Idle, emergency stop, stale sensor data and cancellation stop movement.
+  Manual mapping retains the requested collision-stop bypass.
 
-The same operation can be performed without the UI:
+Synthetic ROS checks live in `scripts/check_navigation_recovery.py`,
+`check_narrow_corridor.py` and `check_path_heading.py`; run sequentially after
+sourcing the workspace. They start no robot and do not test locomotion dynamics.
 
-```bash
-ros2 service call /slam_toolbox/save_map slam_toolbox/srv/SaveMap \
-  "{name: {data: /absolute/path/to/g1_map}}"
-```
-
-## Navigate on the saved map
-
-Stop the mapping launch and start navigation:
-
-```bash
-ros2 launch g1_navigation navigation.launch.py \
-  map:=/absolute/path/to/g1_map.yaml
-```
-
-Select **Navigate** in the React application and click a free map cell. Nav2
-plans globally from the saved occupancy grid. Its rolling local voxel costmap
-and Collision Monitor consume `/g1/mid360/points` directly so temporary and
-moving obstacles are not written into the static map.
-
-## Real G1 deployment
-
-Launch with `start_sim:=false` only after the physical system provides:
-
-- `/g1/mid360/points` with sensor-data QoS.
-- `/g1/odom` including pose and twist.
-- `odom -> base_footprint` and `base_footprint -> pelvis -> mid360_link` TF.
-- A G1 controller subscribed to `/cmd_vel_safe`.
-
-Example:
-
-```bash
-ros2 launch g1_navigation mapping.launch.py start_sim:=false
-```
-
-The current settings are conservative starting values, not calibrated safety
-limits. Verify self-filtering, footprint, obstacle-height bands, stop distance,
-LiDAR blind regions and locomotion stability on the actual robot.
-
-## Important limitation
-
-This stack is for approximately flat indoor floors. It does not provide
-drop-off, hole, downward-stair, slope, swing-foot or footstep planning. A 3D
-voxel costmap still produces a 2D navigation decision. Use a safety operator,
-physical emergency stop and separate terrain perception on hardware.
-
-## Manual retreat after an obstacle stop (Humble console)
-
-`safety.launch.py` runs the final `retreat_guard` node. Collision Monitor writes
-`/cmd_vel_collision`; the guard owns `/cmd_vel_safe`. In mapping mode it permits
-translation at up to a commanded 0.10 m/s only when fresh filtered LiDAR points
-show non-decreasing physical clearance at close obstacles and an improving
-exit direction. Turns and unsafe/stale
-requests remain stopped. Idle, emergency stop and navigation mode cannot use
-the recovery exception. See the UI README's recovery controls.
+This is planar indoor navigation. Terrain, stairs and footstep planning remain
+outside this implementation.

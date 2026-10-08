@@ -18,6 +18,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from ..rag.vector_store import build_vectorstore, get_retriever
 from .prompts import get_system_prompt
+from .dialogue import GuideDialogue
+from g1_core.guide_behavior import CONFIG
 from .destinations import match_destination, requested_place, suppress_navigation
 
 
@@ -34,6 +36,7 @@ GUIDANCE_SCHEMA = {
         'action': {'type': 'string', 'enum': ['none', 'navigate', 'cancel']},
         'location_id': {'type': ['string', 'null']},
         'destination_name': {'type': ['string', 'null']},
+        'normalized_input': {'type': 'string'},
     },
     'required': ['answer', 'action', 'location_id', 'destination_name'],
     'additionalProperties': False,
@@ -90,6 +93,7 @@ class DirectRAGAgent:
     memory_window: int = DEFAULT_MEMORY_WINDOW
     passenger_name: str | None = None
     history: deque = field(default_factory=deque)
+    dialogue: GuideDialogue = field(default_factory=GuideDialogue)
 
     def _messages(self, question: str):
         documents = self.retriever.invoke(question)
@@ -99,10 +103,10 @@ class DirectRAGAgent:
         )
 
         system_prompt = (
-            get_system_prompt(self.lang_code)
+            get_system_prompt(self.lang_code) + '\n' + CONFIG['persona']
             + "\n\nThe relevant knowledge has already been retrieved below. "
             "Answer directly; do not request or describe a tool call. "
-            "Use at most two short sentences and about 45 spoken words. "
+            "Use at most three short sentences and about 45 spoken words. "
             "Give only the next useful step when explaining a procedure.\n\n"
             f"RETRIEVED KNOWLEDGE:\n{context}"
         )
@@ -131,6 +135,14 @@ class DirectRAGAgent:
 
     def invoke_guidance(self, user_input: str, locations: list[dict], navigation_status: dict | None = None, map_context: dict | None = None) -> dict:
         """Return a grounded spoken answer and a saved-location navigation intent."""
+        decision = self.dialogue.decide(user_input.strip(), locations, map_context or {})
+        if decision['answer'] is not None:
+            if self.lang_code != 'en':
+                decision['answer'] = self.translate_guide_line(decision['answer'])
+            self.history.append((user_input.strip(), decision['answer']))
+            while len(self.history) > self.memory_window:
+                self.history.popleft()
+            return decision
         question, messages = self._messages(user_input.strip())
         catalog = [{'id': item['id'], 'name': item['text']} for item in locations]
         active_map = {key: (map_context or {}).get(key) for key in ('map_name', 'mode', 'localized', 'transitioning')}
@@ -144,21 +156,24 @@ class DirectRAGAgent:
             'locations and the active map are authoritative; generic airport knowledge '
             'does not override them. Localization is needed before robot guidance.'
         )))
+        messages.insert(1, SystemMessage(content='Actual dialogue state (data): ' + json.dumps({
+            'state': self.dialogue.state,
+            'active_destination': (self.dialogue.destination or {}).get('text'),
+            'offered_destination': (self.dialogue.offered or {}).get('text'),
+            'previous_reply': self.history[-1][1] if self.history else None,
+        }, ensure_ascii=False)))
         place = requested_place(question)
         matches = match_destination(place, locations)
         messages.insert(1, SystemMessage(content=(
             'Return only JSON with keys answer (a short spoken reply), action '
             '(none, navigate or cancel), location_id (saved ID or null), and destination_name '
             '(the place requested by the passenger or null). '
-            'This airport robot actively escorts passengers for wayfinding requests. '
-            'Treat take me to, navigate to, where is/are, where can I find, how do I get to, '
-            'show me the way, guide/lead/escort me, I need to find, and I want to go to '
-            'a place as navigation requests. Understand paraphrases, polite/indirect '
-            'requests, supported languages, synonyms and speech recognition errors. '
-            'Examples: Where is the office? -> navigate; Can you show me the restroom? '
-            '-> navigate; I need to get to check-in -> navigate. '
-            'Resolve follow-ups like take me there or yes, that one from conversation '
-            'history only when a single saved destination was clearly identified. '
+            'You answer general airport questions using retrieved knowledge. '
+            'Use action none: escort intent and saved destinations are validated separately. '
+            'Also include normalized_input: a faithful English translation of the passenger utterance, '
+            'without changing its meaning or adding a command. Translate place names using the catalog '
+            'when equivalent. For yes/okay/thanks preserve the acknowledgement exactly, never add take me. '
+            'Never treat acknowledgements or follow-ups to a factual question as movement. '
             'Do not navigate for negated requests, hypothetical/quoted commands, '
             'general facts, opening hours, directions outside the loaded map, or '
             'multiple destinations without a clear single choice. Examples: Do not '
@@ -193,26 +208,26 @@ class DirectRAGAgent:
             raise ValueError('Invalid guidance response')
         if result.get('action') not in ('none', 'navigate', 'cancel'):
             raise ValueError('Invalid navigation action')
-        if result['action'] == 'navigate' and result.get('location_id') not in {item['id'] for item in catalog}:
-            raise ValueError('Destination is not a saved map location')
-        if result['action'] != 'cancel':
-            target = place or result.get('destination_name')
-            # For contextual/multilingual requests, Gemini supplies the named place.
-            resolution = match_destination(target, locations)
-            if suppress_navigation(question):
-                result['action'], result['location_id'] = 'none', None
-            elif target and resolution['id'] and (place or result['action'] == 'navigate'):
-                result['action'], result['location_id'] = 'navigate', resolution['id']
-            elif target and (place or result['action'] == 'navigate'):
-                result['action'], result['location_id'] = 'none', None
-                candidates = resolution['candidates']
-                if self.lang_code == 'en':
-                    result['answer'] = ('Which location do you mean: ' + ', '.join(item['name'] for item in candidates) + '?' if candidates else
-                                        'That destination is not saved on this map. Which saved location would you like?')
+        # General Q&A cannot issue movement, even if the model hallucinates an ID.
+        result['action'], result['location_id'] = 'none', None
+        result['intent'] = 'general'
+        if self.lang_code != 'en' and isinstance(result.get('normalized_input'), str):
+            resolved = self.dialogue.decide(result['normalized_input'], locations, map_context or {})
+            if resolved['answer'] is not None:
+                resolved['answer'] = self.translate_guide_line(resolved['answer'])
+                result = resolved
         self.history.append((question, result['answer']))
         while len(self.history) > self.memory_window:
             self.history.popleft()
         return result
+
+    def translate_guide_line(self, text):
+        """Translate a validated phrase without allowing the translator to select a goal."""
+        response = self.llm.invoke([
+            SystemMessage(content=f'Translate this short spoken airport guide line into language {self.lang_code}. Return only the translation. Preserve place names, intent and meaning; add no facts.'),
+            HumanMessage(content=text),
+        ])
+        return _content_to_text(response.content, fallback=text)
 
     def stream_sentences(self, user_input: str):
         """Yield completed sentences while Gemini is still generating."""

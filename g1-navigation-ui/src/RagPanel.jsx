@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
+import MapView from "./MapView.jsx";
 import { LiveAudio } from "./liveAudio.js";
 
 const LANGUAGES = { en: "English", fr: "Français", de: "Deutsch", es: "Español", ru: "Русский", ja: "日本語", zh: "中文", ko: "한국어", hi: "हिंदी", si: "සිංහල", ta: "தமிழ்" };
 
-export default function RagPanel({ navigationStatus, consoleSession, onOpenMaps }) {
+export default function RagPanel({ navigationStatus, consoleSession, onOpenMaps, map, robotPose, path = [], connected }) {
   const [backend, setBackend] = useState(null);
   const [mapContext, setMapContext] = useState(null);
   const [navigation, setNavigation] = useState(null);
@@ -67,7 +68,10 @@ export default function RagPanel({ navigationStatus, consoleSession, onOpenMaps 
           if (ws.bufferedAmount > 256000) { end("Connection too slow for live audio. Reconnect on a stronger network."); return; }
           ws.send(packet);
         }
-      }, playing => { if (mounted.current && generation.current === turn) setSpeaking(playing); });
+      }, playing => { if (mounted.current && generation.current === turn) setSpeaking(playing); }, (type, id) => {
+        const ws = socket.current;
+        if (generation.current === turn && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, id }));
+      });
       audio.current = capture;
       // Resume audio during this user gesture, before any network request.
       await capture.open();
@@ -80,12 +84,18 @@ export default function RagPanel({ navigationStatus, consoleSession, onOpenMaps 
         if (turn !== generation.current) return;
         try {
           const result = JSON.parse(event.data);
-          if (result.type === "ready") { clearTimeout(timeout.current); capture.connected = true; setPhase("Listening"); }
+          if (result.type === "ready") { clearTimeout(timeout.current); capture.connected = true; capture.finishReplies = !!result.finish_replies; setPhase("Listening"); }
           else if (result.type === "audio") capture.play(result.data, result.sample_rate);
-          else if (result.type === "audio_file") capture.playFile(result.data).catch(err => { if (turn === generation.current) end(err.message); });
+          else if (result.type === "audio_file") capture.playFile(result.data, result.id).catch(err => {
+            if (turn === generation.current) {
+              if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'playback_error', id: result.id }));
+              setError(`Reply audio could not play: ${err.message}. Please try again.`);
+            }
+          });
           else if (result.type === "notice") setError(result.message);
           else if (result.type === "navigation") setNavigation(result);
-          else if (result.type === "interrupted") { capture.interrupt(); setPhase("Listening"); }
+          else if (result.type === "listening") capture.setListening(result.enabled);
+          else if (result.type === "interrupted") { if (!capture.finishReplies) capture.interrupt(); setPhase("Listening"); }
           else if (result.type === "state") setPhase(result.state);
           else if (result.type === "turn_complete") setPhase("Listening");
           else if (result.type === "transcript") setMessages(previous => {
@@ -114,12 +124,18 @@ export default function RagPanel({ navigationStatus, consoleSession, onOpenMaps 
     } catch (err) { setError(err.message); }
     finally { setMapBusy(false); }
   };
+  const contextMatchesMap = mapContext?.map_id === session?.selected_map?.id;
+  const destinations = contextMatchesMap ? mapContext?.locations || [] : [];
+  const escortStatus = contextMatchesMap ? mapContext?.navigation : null;
+  const escortGoal = escortStatus?.goal && !["canceled", "idle"].includes(escortStatus.state)
+    ? { world: escortStatus.goal } : null;
+  const remaining = escortStatus?.distance_remaining;
   const state = !running ? ready ? "Ready to talk" : backend?.ready && !backend.configured ? "API key required" : "Preparing" : muted ? "Microphone muted" : speaking ? "Assistant speaking" : phase;
 
   return <section className="ragpanel" aria-label="Live RAG conversation">
     <div className="cardhead"><span>AIRPORT PASSENGER ASSISTANT</span><span>{state}</span></div>
     <div className="ragbody">
-      <p>Start once and talk naturally. Your airport assistant listens, replies aloud, and stays ready for your next question. You can interrupt while it is speaking.</p>
+      <p>Start once and talk naturally. Your airport assistant listens, replies aloud, and stays ready for your next question. Listen to the full reply, then speak when it finishes. The microphone pauses during replies to prevent speaker echo.</p>
       <div className="ragsettings">
         <label>Language<select value={language} disabled={running} onChange={event => setLanguage(event.target.value)}>{Object.entries(LANGUAGES).map(([code, title]) => <option key={code} value={code}>{title}</option>)}</select></label>
         <label>Your name (optional)<input maxLength={60} value={name} disabled={running} onChange={event => setName(event.target.value)} /></label>
@@ -128,7 +144,7 @@ export default function RagPanel({ navigationStatus, consoleSession, onOpenMaps 
       {backend?.ready && !backend.configured && <p className="labelerror">Set GOOGLE_API_KEY on the computer or in the workspace .env, then restart the UI. Your key stays on the computer.</p>}
       {!supported && <p className="labelerror">Live microphone access needs HTTPS on your phone, or localhost on this computer, and a browser with AudioWorklet support.</p>}
       <div className="voice-navigation">
-        <strong>Spoken destination → Nav2</strong>
+        <strong>Spoken destination → A* navigation</strong>
         <label>Conversation map<select aria-label="Conversation map" value={selectedMap} disabled={running || changingMap || !session} onChange={event => setSelectedMap(event.target.value)}>
           <option value="">Choose a labeled saved map</option>
           {(session?.maps || []).map(map => <option key={map.id} value={map.id}>{map.name}</option>)}
@@ -147,6 +163,15 @@ export default function RagPanel({ navigationStatus, consoleSession, onOpenMaps 
         {navigation && <p role="status">{navigation.message || navigation.state}</p>}
         {navigationStatus && <p role="status">Robot: {navigationStatus.message}</p>}
       </div>
+      <section className="mapcard ragmap" aria-label="Live conversation map">
+        <div className="cardhead"><span>LIVE ROBOT MAP</span><span>{changingMap ? "Loading map…" : session?.selected_map?.name || "No map loaded"}</span></div>
+        <MapView key={session?.selected_map?.id || "live"} map={changingMap ? null : map}
+          robotPose={changingMap ? null : robotPose} path={changingMap ? [] : path}
+          goal={changingMap ? null : escortGoal} labels={changingMap ? [] : destinations}
+          canSetGoal={false} staticMap={session?.mode === "localization"} />
+        <div className="legend"><span><i className="robot" /> Robot / heading</span><span><i className="route" /> Route</span><span><i className="target" /> Destination</span><span><i className="location" /> Saved location</span></div>
+        <p className="ragmapstatus" role="status">{!connected ? "ROS disconnected — waiting for live robot updates." : !robotPose || !mapContext?.localized ? "Set the robot's initial pose in Maps & Localization to track it on this map." : "Robot position updates live as it follows your spoken destination."}{Number.isFinite(remaining) && ` ${remaining.toFixed(2)} m remaining.`}</p>
+      </section>
       <div className={`livevoice ${running ? "running" : ""} ${speaking ? "speaking" : ""}`}>
         <div className="voiceorb" aria-hidden="true">◉</div>
         <strong role="status">{state}</strong>
@@ -164,7 +189,7 @@ export default function RagPanel({ navigationStatus, consoleSession, onOpenMaps 
           {messages.map(message => <article key={message.id} className={message.role === "user" ? "human" : "assistant"}><strong>{message.role === "user" ? "You" : "Airport assistant"}</strong><p>{message.text}</p></article>)}
         </div>
       </details>
-      <p className="hint">This device supplies the microphone and speaker. {backend?.pipeline === "gemini_live" ? "Native Gemini Live audio is enabled for this session." : "Audio is checked by WebRTC VAD and transcribed by Whisper on the computer. Gemini answers from retrieved airport knowledge; TTS plays replies here."} Leaving this tab ends the conversation. Spoken guidance uses saved map locations and Nav2.</p>
+      <p className="hint">This device supplies the microphone and speaker. {backend?.pipeline === "gemini_live" ? "Native Gemini Live audio is enabled for this session." : "Audio is checked by WebRTC VAD and transcribed by Whisper on the computer. Gemini answers from retrieved airport knowledge; TTS plays replies here."} Leaving this tab ends the conversation. Spoken guidance uses saved map locations and A* navigation.</p>
     </div>
   </section>;
 }

@@ -11,6 +11,7 @@ from std_msgs.msg import Float64MultiArray, String
 from geometry_msgs.msg import Twist
 
 import onnxruntime as ort
+from .guide_behavior import GesturePlayer
 
 # Actuator order (matches data.ctrl layout in g1_mujoco_bridge)
 ACTUATOR_ORDER = [
@@ -52,13 +53,6 @@ def resolve_policy_dir():
     )
 
 RIGHT_ARM_INDICES = np.arange(22, 29)
-RIGHT_ARM_WAVE_POSE = np.array(
-    [-2.2, -0.8, 0.0, 0.49, 0.0, 0.0, 0.0], dtype=np.float32
-)
-WAVE_RAISE_SEC = 2.0
-WAVE_MOTION_SEC = 2.5
-WAVE_LOWER_SEC = 2.0
-WAVE_DURATION_SEC = WAVE_RAISE_SEC + WAVE_MOTION_SEC + WAVE_LOWER_SEC
 DEFAULT_CMD_VEL_TIMEOUT_SEC = 0.5
 # Do not hand balance from fixed-stand to the walking policy while a velocity
 # smoother is only partway through its initial ramp. The terminal controller
@@ -109,8 +103,7 @@ class G1RLController(Node):
         # target makes the bridge switch immediately to the much softer
         # locomotion gains, before the policy has any reason to take over.
         self.policy_active = False
-        self.wave_started_at = None
-        self.wave_start_pose = np.zeros(7, dtype=np.float32)
+        self.gesture = GesturePlayer()
         
         self.has_joint_state = False
         self.has_imu = False
@@ -218,60 +211,16 @@ class G1RLController(Node):
         clamped = np.clip(delta, -self._slew_max, self._slew_max)
         self.commands += clamped
 
-    def on_gesture_command(self, msg: String):
-        """Start a simulated wave without interrupting lower-body control."""
-        if msg.data not in ("wave", "wave_with_turn"):
-            self.get_logger().warn(f"Unknown gesture command: {msg.data}")
-            return
-
-        self.wave_start_pose = self.joint_pos[RIGHT_ARM_INDICES].copy()
-        self.wave_started_at = self.get_clock().now().nanoseconds / 1e9
-        # A one-arm overhead pose changes the center of mass.  Do not combine
-        # it with a stale walking command.
-        self.commands[:] = 0.0
-        self.get_logger().info("Starting right-hand wave gesture")
-
-    @staticmethod
-    def _smoothstep(value):
-        value = np.clip(value, 0.0, 1.0)
-        return value * value * (3.0 - 2.0 * value)
-
-    def apply_wave_gesture(self, target_pos, now_sec):
-        """Blend a smooth right-arm wave over the RL policy output."""
-        if self.wave_started_at is None:
-            return target_pos
-
-        elapsed = now_sec - self.wave_started_at
-        policy_arm = target_pos[RIGHT_ARM_INDICES].copy()
-
-        if elapsed < WAVE_RAISE_SEC:
-            blend = self._smoothstep(elapsed / WAVE_RAISE_SEC)
-            wave_arm = (
-                (1.0 - blend) * self.wave_start_pose
-                + blend * RIGHT_ARM_WAVE_POSE
-            )
-        elif elapsed < WAVE_RAISE_SEC + WAVE_MOTION_SEC:
-            wave_time = elapsed - WAVE_RAISE_SEC
-            phase = 2.0 * math.pi * 0.65 * wave_time
-            wave_arm = RIGHT_ARM_WAVE_POSE.copy()
-            # Keep heavy shoulder/elbow joints still.  Moving only the wrist
-            # makes the wave visible without injecting large torso momentum.
-            wave_arm[5] = 0.14 * math.sin(phase)
-            wave_arm[6] = 0.45 * math.sin(phase)
-        elif elapsed < WAVE_DURATION_SEC:
-            lower_time = elapsed - WAVE_RAISE_SEC - WAVE_MOTION_SEC
-            blend = self._smoothstep(lower_time / WAVE_LOWER_SEC)
-            wave_arm = (
-                (1.0 - blend) * RIGHT_ARM_WAVE_POSE
-                + blend * policy_arm
-            )
+    def play_gesture(self, name):
+        accepted = self.gesture.play_gesture(name)
+        if accepted:
+            self.get_logger().info(f'Concierge gesture: {name}')
         else:
-            self.wave_started_at = None
-            self.get_logger().info("Right-hand wave gesture finished")
-            return target_pos
+            self.get_logger().warn(f'Unknown gesture: {name}')
+        return accepted
 
-        target_pos[RIGHT_ARM_INDICES] = wave_arm
-        return target_pos
+    def on_gesture_command(self, msg: String):
+        self.play_gesture(msg.data)
 
     def compute_projected_gravity(self):
         # Mathematically equivalent to inverse quaternion rotation of [0, 0, -1]
@@ -324,12 +273,12 @@ class G1RLController(Node):
         # 6. Joint Vel Rel (29)
         self.obs_buf[0, 40:69] = self.joint_vel
 
-        # The overhead pose is outside the locomotion policy's trained arm
+        # The compact gesture is outside the locomotion policy's trained arm
         # range.  Hide only the gesture-controlled joints so the policy does
         # not interpret the intentional arm pose as a whole-body disturbance.
         # IMU feedback remains untouched, so genuine balance corrections still
         # happen normally through the legs and waist.
-        if self.wave_started_at is not None:
+        if self.gesture.name is not None:
             self.obs_buf[0, 11 + RIGHT_ARM_INDICES] = 0.0
             self.obs_buf[0, 40 + RIGHT_ARM_INDICES] = 0.0
         
@@ -355,8 +304,7 @@ class G1RLController(Node):
         
         # Scale and offset to get target positions
         target_pos = action * self.action_scale + self.action_offset
-        now_sec = now_ns / 1e9
-        target_pos = self.apply_wave_gesture(target_pos, now_sec)
+        target_pos = self.gesture.apply(target_pos, moving=np.linalg.norm(self.commands) >= .05)
 
         
         # Publish

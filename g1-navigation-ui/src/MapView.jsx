@@ -252,7 +252,7 @@ export default function MapView({ map, robotPose, goal, path, canSetGoal, onGoal
       </div>
     </div>
     <div ref={viewportRef} className={`mapviewport ${canSetGoal || labelPicking || posePicking ? "clickable" : ""} ${dragging ? "dragging" : ""}`}>
-      <canvas ref={canvasRef} tabIndex={0} aria-label="Interactive occupancy map. Scroll to zoom, drag to pan. In Navigate mode, click to set a goal."
+      <canvas ref={canvasRef} tabIndex={0} aria-label={`Interactive occupancy map. Scroll to zoom, drag to pan.${canSetGoal ? " Click to set a goal." : ""}`}
         onKeyDown={keyDown} onPointerDown={pointerDown} onPointerMove={pointerMove}
         onPointerUp={pointerEnd} onPointerCancel={pointerEnd} onLostPointerCapture={pointerEnd}
         onContextMenu={event => event.preventDefault()} />

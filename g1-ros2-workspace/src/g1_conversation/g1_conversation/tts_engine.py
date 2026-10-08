@@ -610,7 +610,11 @@ class TTSEngine:
             f"{output_path}.{threading.get_ident()}-{time.time_ns()}.part"
         )
         try:
-            asyncio.run(self._generate_edge_async(text, profile, partial_path))
+            from g1_core.guide_behavior import CONFIG
+            async def bounded_generation():
+                await asyncio.wait_for(self._generate_edge_async(text, profile, partial_path),
+                                       timeout=CONFIG['speech']['tts_timeout_seconds'] - 2.)
+            asyncio.run(bounded_generation())
             if not os.path.exists(partial_path) or os.path.getsize(partial_path) == 0:
                 raise RuntimeError("edge-tts returned an empty audio file")
             os.replace(partial_path, output_path)

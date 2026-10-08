@@ -22,6 +22,6 @@ if not os.environ.get('G1_RAG_PYTHON'):
         subprocess.run([str(python), '-m', 'pip', 'install', '-r', str(requirements)], check=True)
         marker.write_text(content)
 # Do not inherit the simulation's numpy/ONNX dependencies via PYTHONPATH.
-os.environ['PYTHONPATH'] = str(ROOT / 'g1-ros2-workspace/src/g1_conversation')
+os.environ['PYTHONPATH'] = os.pathsep.join(str(ROOT / ('g1-ros2-workspace/src/' + package)) for package in ('g1_conversation', 'g1_core'))
 os.environ['PYTHONNOUSERSITE'] = '1'
 os.execv(str(python), [str(python), str(Path(__file__).with_name('rag_worker.py'))])

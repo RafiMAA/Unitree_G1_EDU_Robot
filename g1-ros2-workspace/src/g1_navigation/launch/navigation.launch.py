@@ -8,7 +8,6 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-
 def generate_launch_description():
     nav_share = get_package_share_directory('g1_navigation')
     start_nav = LaunchConfiguration('start_nav')
@@ -19,26 +18,18 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     params_file = LaunchConfiguration('params_file')
     map_file = LaunchConfiguration('map')
+    astar_params = os.path.join(nav_share, 'config', 'astar_params.yaml')
     default_params = os.path.join(nav_share, 'config', 'nav2_params.yaml')
 
-    lifecycle_nodes = [
-        'map_server',
-        'amcl',
-        'controller_server',
-        'smoother_server',
-        'planner_server',
-        'behavior_server',
-        'bt_navigator',
-    ]
+    lifecycle_nodes = ['map_server', 'amcl']
     common = {'use_sim_time': use_sim_time}
 
     def lifecycle_manager(context):
-        navigating = start_nav.perform(context).lower() in ('true', '1')
         return [Node(
             package='nav2_lifecycle_manager', executable='lifecycle_manager',
-            name='lifecycle_manager_navigation' if navigating else 'lifecycle_manager_localization',
+            name='lifecycle_manager_localization',
             output='screen', parameters=[common, {'autostart': True},
-                {'node_names': lifecycle_nodes if navigating else ['map_server', 'amcl']}],
+                {'node_names': lifecycle_nodes}],
         )]
 
     return LaunchDescription(
@@ -86,49 +77,7 @@ def generate_launch_description():
                 output='screen',
                 parameters=[params_file, common, {'set_initial_pose': False}],
             ),
-            Node(
-                package='nav2_controller',
-                executable='controller_server',
-                condition=IfCondition(start_nav),
-                name='controller_server',
-                output='screen',
-                parameters=[params_file, common],
-                remappings=[('cmd_vel', '/cmd_vel_controller')],
-            ),
-            Node(
-                package='nav2_smoother',
-                executable='smoother_server',
-                condition=IfCondition(start_nav),
-                name='smoother_server',
-                output='screen',
-                parameters=[params_file, common],
-            ),
-            Node(
-                package='nav2_planner',
-                executable='planner_server',
-                condition=IfCondition(start_nav),
-                name='planner_server',
-                output='screen',
-                parameters=[params_file, common],
-            ),
-            Node(
-                package='nav2_behaviors',
-                executable='behavior_server',
-                condition=IfCondition(start_nav),
-                name='behavior_server',
-                output='screen',
-                parameters=[params_file, common],
-                remappings=[('cmd_vel', '/cmd_vel_controller')],
-            ),
-            Node(
-                package='nav2_bt_navigator',
-                executable='bt_navigator',
-                condition=IfCondition(start_nav),
-                name='bt_navigator',
-                output='screen',
-                parameters=[params_file, common, {'default_nav_to_pose_bt_xml': os.path.join(
-                    nav_share, 'behavior_trees', 'navigate_with_clearance_recovery.xml')}],
-            ),
+
             OpaqueFunction(function=lifecycle_manager),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
@@ -139,6 +88,11 @@ def generate_launch_description():
                     'use_sim_time': use_sim_time,
                 }.items(),
                 condition=IfCondition(start_safety),
+            ),
+            Node(
+                package='g1_navigation', executable='astar_navigator', name='g1_astar',
+                output='screen', condition=IfCondition(start_nav),
+                parameters=[astar_params, common, {'cmd_vel_topic': '/cmd_vel_controller'}],
             ),
         ]
     )

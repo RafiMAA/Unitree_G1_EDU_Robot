@@ -55,14 +55,13 @@ def test_no_observations_or_invalid_velocity_cannot_authorize_retreat():
     assert retreat_velocity([[0.46, 0, float('nan')]], -0.2, 0, 0) is None
 
 
-def test_navigation_prediction_uses_the_padded_costmap_footprint():
+def test_navigation_prediction_uses_the_padded_body_footprint():
     config = yaml.safe_load((Path(__file__).parents[1] / 'config/nav2_params.yaml').read_text())
-    local = config['local_costmap']['local_costmap']['ros__parameters']
-    points = np.array(yaml.safe_load(local['footprint']))
-    padding = local['footprint_padding']
-    assert points[:, 0].min() - padding == pytest.approx(-0.29)
-    assert points[:, 0].max() + padding == pytest.approx(0.39)
-    assert abs(points[:, 1]).max() + padding == pytest.approx(0.33)
+    from g1_navigation.astar import PADDED_FOOTPRINT
+    points = np.array(PADDED_FOOTPRINT)
+    assert points[:, 0].min() == pytest.approx(-0.29)
+    assert points[:, 0].max() == pytest.approx(0.39)
+    assert abs(points[:, 1]).max() == pytest.approx(0.33)
     monitor = config['collision_monitor']['ros__parameters']
     assert monitor['polygons'] == ['footprint_approach']
     approach = monitor['footprint_approach']

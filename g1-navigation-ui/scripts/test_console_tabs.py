@@ -17,6 +17,10 @@ class TabTests(unittest.TestCase):
         c.error, c.map = '', None
         c.processes, c.futures = {}, {}
         c.mode_pub, c.cancel_pub = Mock(), Mock()
+        c.guide_status, c.guide_status_time = None, 0.
+        c.guide_profile = Mock()
+        c.guide_profile.call_async.return_value.done.return_value = True
+        c.guide_profile.call_async.return_value.result.return_value.success = True
         self.commands = {}
         def spawn(name, command, *args):
             token = object()
@@ -153,6 +157,15 @@ class TabTests(unittest.TestCase):
         c.map = NS(info=NS(resolution=1., width=2, height=2, origin=NS(position=NS(x=0.,y=0.), orientation=NS(x=0.,y=0.,z=0.,w=1.))), data=[0,100,-1,0])
         return c, {'map_id': '/maps/airport.yaml', 'location_id': 'office'}
 
+    def test_gateway_rejection_is_bound_to_voice_goal_for_narration(self):
+        import json
+        from types import SimpleNamespace as NS
+        c=self.console
+        c.spoken_goal={'x':1.,'y':2.}
+        c.on_navigation_status(NS(data=json.dumps({'state':'rejected','message':'No feasible goal'})))
+        self.assertEqual(c.guide_status['state'],'rejected')
+        self.assertEqual(c.guide_status['goal'],c.spoken_goal)
+
     def test_spoken_goal_uses_saved_coordinates_and_keeps_rag_running(self):
         import rclpy.time
         c, payload = self.spoken_setup()
@@ -208,6 +221,24 @@ class TabTests(unittest.TestCase):
         self.assertIs(c.futures['collision_monitor'], replacement)
         c.poll_ready()
         self.assertTrue(c.readiness['collision_monitor'])
+
+    def test_astar_readiness_uses_trigger_success_and_stops_on_failure(self):
+        from types import SimpleNamespace as NS
+        from std_srvs.srv import Trigger
+        c = self.console
+        future, client = Mock(), Mock()
+        future.done.return_value = True
+        future.result.return_value = NS(success=True)
+        client.service_is_ready.return_value = True
+        client.call_async.return_value = future
+        c.clients, c.readiness = {'g1_astar': client}, {}
+        c.futures, c.future_started = {'g1_astar': future}, {}
+        c.poll_ready()
+        self.assertTrue(c.navigation_ready)
+        self.assertIsInstance(client.call_async.call_args.args[0], Trigger.Request)
+        future.result.return_value = NS(success=False)
+        c.poll_ready()
+        self.assertFalse(c.navigation_ready)
 
 
 if __name__ == '__main__':

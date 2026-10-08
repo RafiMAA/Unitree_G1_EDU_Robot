@@ -12,15 +12,24 @@ from spoken_navigation import goal_is_free
 class SegmentationTests(unittest.TestCase):
     def test_sustained_speech_starts_and_pause_finishes_one_utterance(self):
         detector = Mock()
-        detector.is_speech.side_effect = [False] * 4 + [True] * 6 + [False] * 30
+        detector.is_speech.side_effect = [False] * 4 + [True] * 12 + [False] * 24
         turns = SpeechTurns(detector=detector)
-        events = turns.feed(np.zeros(480 * 8, dtype='<i2').tobytes())
-        self.assertEqual([event[0] for event in events], ['speech_start'])
+        packet = (np.sin(np.arange(480*8)*.1)*1600).astype('<i2').tobytes()
+        events = turns.feed(packet)
+        self.assertEqual(events, [])
         for _ in range(4):
-            events += turns.feed(np.zeros(480 * 8, dtype='<i2').tobytes())
+            events += turns.feed(packet)
         self.assertEqual([event[0] for event in events], ['speech_start','utterance'])
         self.assertGreater(len(events[-1][1]), 480 * 6)
         self.assertFalse(turns.active)
+
+    def test_quiet_packets_never_interrupt_even_if_vad_misclassifies_them(self):
+        detector=Mock();detector.is_speech.return_value=True
+        turns=SpeechTurns(detector=detector)
+        for _ in range(25):
+            self.assertEqual(turns.feed(np.zeros(640,dtype='<i2').tobytes()), [])
+        packet=(np.sin(np.arange(480)*.1)*10).astype('<i2').tobytes()
+        for _ in range(20):self.assertEqual(turns.feed(packet), [])
 
     def test_silence_does_not_reach_stt_and_48khz_is_normalized(self):
         detector = Mock(); detector.is_speech.return_value = False
@@ -47,10 +56,11 @@ class GuidanceTests(unittest.TestCase):
         agent=DirectRAGAgent('en',llm,retriever)
         result=agent.invoke_guidance('Take me to the office',[{'id':'office','text':'Office'}])
         self.assertEqual(result['location_id'],'office')
-        retriever.invoke.assert_called_once_with('Take me to the office')
+        retriever.invoke.assert_not_called()
+        agent.invoke_guidance('What services are available?', [{'id':'office','text':'Office'}])
+        retriever.invoke.assert_called_once_with('What services are available?')
         llm.invoke.return_value=NS(content=json.dumps({'answer':'Walking','action':'navigate','location_id':'invented'}))
-        with self.assertRaises(ValueError):
-            agent.invoke_guidance('Take me to gate 999',[{'id':'office','text':'Office'}])
+        self.assertEqual(agent.invoke_guidance('Take me to gate 999',[{'id':'office','text':'Office'}])['action'], 'none')
 
 @unittest.skipUnless(importlib.util.find_spec('faster_whisper'), 'Use .rag-venv')
 class PipelineTests(unittest.IsolatedAsyncioTestCase):
@@ -58,8 +68,18 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         from pipeline_rag import pipeline_session
         from test_live_rag import Socket
         ws=Socket(); trace=[]
+        original_send = ws.send
+        async def acknowledge(packet):
+            await original_send(packet)
+            event = json.loads(packet)
+            if event['type'] == 'audio_file':
+                self.assertNotIn('goal', trace)
+                await ws.queue.put(json.dumps({'type':'playback_started','id':event['id']}))
+                await ws.queue.put(json.dumps({'type':'playback_ended','id':event['id']}))
+        ws.send = acknowledge
         class Turns:
             def __init__(self,*args): pass
+            def reset(self): pass
             def feed(self,packet):return [('speech_start',None),('utterance',np.ones(1000,dtype=np.float32))]
         stt=Mock();stt.transcribe.return_value=NS(is_empty=False,text='Take me to office')
         tts=Mock();tts.synthesize_bytes.return_value=(b'fake-mp3','audio/mpeg')
@@ -67,12 +87,13 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         runtime=NS(create_agent=Mock(return_value=agent))
         def request(route,payload=None):
             trace.append(route)
-            if route=='context':return {'map_id':'map.yaml','locations':[{'id':'office','text':'Office'}]}
+            if route=='context':return {'map_id':'map.yaml','locations':[{'id':'office','text':'Office','x':2.,'y':0.}]}
             if route=='goal':return {'state':'submitted','destination':'Office','message':'Goal submitted'}
             if route=='transcript':raise ConnectionError('ROS publisher unavailable')
             return {'ready':True}
         with patch('pipeline_rag.SpeechTurns',Turns),patch('g1_conversation.stt_engine.STTEngine',return_value=stt),patch('g1_conversation.tts_engine.TTSEngine',return_value=tts):
             task=asyncio.create_task(pipeline_session(ws,runtime,'en','Passenger',16000,request))
+            while not any(e['type']=='turn_complete' for e in ws.sent): await asyncio.sleep(.005)
             await ws.queue.put(b'\x00\x00'*640)
             async def wait():
                 while not any(event['type']=='navigation' for event in ws.sent):await asyncio.sleep(.005)
@@ -89,17 +110,28 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         from pipeline_rag import pipeline_session
         from test_live_rag import Socket
         ws = Socket()
+        original_send = ws.send
+        async def acknowledge(packet):
+            await original_send(packet)
+            event=json.loads(packet)
+            if event['type']=='audio_file':
+                for kind in ('playback_started','playback_ended'):
+                    await ws.queue.put(json.dumps({'type':kind,'id':event['id']}))
+        ws.send=acknowledge
         class Turns:
             def __init__(self, *args): pass
+            def reset(self): pass
             def feed(self, packet):
                 return [('speech_start', None), ('utterance', np.ones(1000, dtype=np.float32))]
-        stt = Mock(); stt.transcribe.return_value = NS(is_empty=False, text='Where is baggage claim?')
+        stt = Mock(); stt.transcribe.return_value = NS(is_empty=False, text='How many passengers visit?')
         tts = Mock(); tts.synthesize_bytes.return_value = (b'fallback-audio', 'audio/mpeg')
         agent = Mock(); agent.invoke_guidance.side_effect = TimeoutError()
         runtime = NS(create_agent=Mock(return_value=agent))
         request = Mock(return_value={'locations': []})
         with patch('pipeline_rag.SpeechTurns', Turns), patch('g1_conversation.stt_engine.STTEngine', return_value=stt), patch('g1_conversation.tts_engine.TTSEngine', return_value=tts):
             task = asyncio.create_task(pipeline_session(ws, runtime, 'en', '', 16000, request))
+            while not any(e['type']=='turn_complete' for e in ws.sent): await asyncio.sleep(.005)
+            ws.sent.clear()
             await ws.queue.put(b'\x00\x00' * 640)
             async def wait():
                 while not any(event['type'] == 'audio_file' for event in ws.sent):

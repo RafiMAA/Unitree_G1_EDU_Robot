@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import rclpy
 from lifecycle_msgs.srv import GetState
+from std_srvs.srv import Trigger, SetBool
 from nav_msgs.msg import OccupancyGrid
 from geometry_msgs.msg import PoseWithCovarianceStamped, PoseStamped
 from rclpy.signals import SignalHandlerOptions
@@ -23,6 +24,7 @@ from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from std_msgs.msg import String, Bool
 from map_library import MapLibrary
 from spoken_navigation import goal_is_free
+from g1_core.guide_behavior import CONFIG
 
 UI = Path(__file__).resolve().parents[1]
 WORKSPACE = UI.parent / 'g1-ros2-workspace'
@@ -47,22 +49,30 @@ class Supervisor:
         self.estop = False
         self.navigation_status = {'state': 'idle', 'message': 'No navigation request'}
         self.gateway_mode = 'idle'
+        self.spoken_goal = None
+        self.guide_status = None
+        self.guide_status_time = 0.
         self.transitioning = False
         self.amcl_ready = False
         self.navigation_ready = False
         self.localized = False
         self.node = rclpy.create_node('g1_console_supervisor')
-        self.mode_pub = self.node.create_publisher(String, '/ui/mode', 10)
+        mode_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.RELIABLE)
+        self.mode_pub = self.node.create_publisher(String, '/ui/mode', mode_qos)
         self.cancel_pub = self.node.create_publisher(Bool, '/ui/cancel_navigation', 10)
         self.speech_pub = self.node.create_publisher(String, '/g1/speech_text', 10)
         self.goal_pub = self.node.create_publisher(PoseStamped, '/ui/goal', 10)
+        self.gesture_pub = self.node.create_publisher(String, '/g1/gesture_command', 10)
+        self.guide_profile = self.node.create_client(SetBool, '/g1_astar/guide_profile')
         self.answer_pub = self.node.create_publisher(String, '/g1/agent_response', 10)
-        self.clients = {name: self.node.create_client(GetState, f'/{name}/get_state') for name in ('amcl', 'bt_navigator', 'collision_monitor', 'velocity_smoother')}
+        self.clients = {name: self.node.create_client(GetState, f'/{name}/get_state') for name in ('amcl', 'collision_monitor', 'velocity_smoother')}
+        self.clients['g1_astar'] = self.node.create_client(Trigger, '/g1_astar/ready')
         self.futures = {}
         self.future_started = {}
         self.readiness = {}
         self.node.create_subscription(Bool, '/ui/emergency_stop', lambda msg: setattr(self, 'estop', bool(msg.data)), 10)
         self.node.create_subscription(String, '/ui/navigation_status', self.on_navigation_status, 10)
+        self.node.create_subscription(String, '/g1/guide_status', self.on_guide_status, 10)
         self.node.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self.on_pose, 10)
         self.node.create_subscription(PoseWithCovarianceStamped, '/initialpose', self.on_initial_pose, 10)
         self.node.create_timer(1.0, self.poll_ready)
@@ -77,10 +87,28 @@ class Supervisor:
         try:
             value = json.loads(msg.data)
             self.navigation_status = value
+            # Gateway rejections happen before A* creates a job. Bind these to
+            # the submitted voice goal so the narrator can report the failure.
+            if value.get('state') in ('rejected', 'unavailable', 'failed') and getattr(self, 'spoken_goal', None):
+                self.guide_status = {**value, 'goal': dict(self.spoken_goal)}
+                self.guide_status_time = time.monotonic()
             if value.get('message', '').startswith('Mode: '):
                 self.gateway_mode = value['message'].split(': ', 1)[1]
         except (ValueError, TypeError):
             pass
+
+    def on_guide_status(self, msg):
+        try:
+            self.guide_status = json.loads(msg.data)
+            self.guide_status_time = time.monotonic()
+        except (ValueError, TypeError):
+            pass
+
+    def play_gesture(self, name):
+        if self.tab != 'rag' or self.estop or name not in CONFIG['gestures']:
+            raise ValueError('Gesture is not available')
+        self.gesture_pub.publish(String(data=name))
+        return {'gesture': name}
 
     def rag_context(self):
         from g1_navigation.label_store import LabelStore
@@ -88,11 +116,14 @@ class Supervisor:
             locations = []
             if self.mode == 'localization' and self.selected:
                 locations = LabelStore(LIBRARY.directory).load(self.selected['name'])
+            navigation = dict(self.guide_status or self.navigation_status)
+            if self.guide_status and time.monotonic()-self.guide_status_time > CONFIG['narration']['feedback_stale_seconds'] and navigation.get('state') not in ('succeeded', 'failed', 'canceled'):
+                navigation.update(state='paused', message='Waiting for fresh navigation feedback')
             return {'map_id': self.selected['id'] if self.selected else None,
                     'map_name': self.selected['name'] if self.selected else None,
                     'mode': self.mode, 'transitioning': self.transitioning,
                     'locations': locations, 'localized': self.localized,
-                    'navigation': self.navigation_status}
+                    'navigation': navigation}
 
     def spoken_destination(self, payload):
         if self.tab != 'rag' or self.transitioning:
@@ -126,15 +157,25 @@ class Supervisor:
             with self.lock:
                 self.spoken_destination(payload)
                 if self.navigation_ready and all(self.readiness.get(name, False) for name in ('collision_monitor', 'velocity_smoother')):
-                    return {'ready': True}
+                    break
             time.sleep(.1)
-        raise ValueError('Nav2 or its collision/velocity controllers are not ready; check navigation logs')
+        else:
+            raise ValueError('A* navigation or its collision/velocity controllers are not ready; check navigation logs')
+        if not self.guide_profile.wait_for_service(timeout_sec=2.):
+            raise ValueError('Rebuild navigation to enable the guide profile')
+        future = self.guide_profile.call_async(SetBool.Request(data=True))
+        deadline = time.monotonic() + 2.
+        while not future.done() and time.monotonic() < deadline:
+            time.sleep(.02)
+        if not future.done() or not future.result().success:
+            raise ValueError('Guide walking profile could not be enabled')
+        return {'ready': True}
 
     def send_spoken_goal(self, payload):
         with self.lock:
             label = self.spoken_destination(payload)
             if not self.navigation_ready or not all(self.readiness.get(name, False) for name in ('collision_monitor', 'velocity_smoother')):
-                raise ValueError('Nav2 and collision controls must be ready')
+                raise ValueError('A* navigation and collision controls must be ready')
             self.mode_pub.publish(String(data='navigate'))
         deadline = time.monotonic() + 2
         while self.gateway_mode != 'navigate' and time.monotonic() < deadline:
@@ -150,10 +191,13 @@ class Supervisor:
             goal.header.stamp = self.node.get_clock().now().to_msg()
             goal.pose.position.x, goal.pose.position.y = label['x'], label['y']
             goal.pose.orientation.z, goal.pose.orientation.w = math.sin(label['yaw'] / 2), math.cos(label['yaw'] / 2)
+            self.guide_status = None
+            self.spoken_goal = {'x': label['x'], 'y': label['y']}
             self.goal_pub.publish(goal)
             return {'state': 'submitted', 'destination': label['text'], 'message': f"Goal submitted for {label['text']}"}
 
     def cancel_spoken_navigation(self):
+        self.spoken_goal = None
         if self.tab == 'rag':
             self.mode_pub.publish(String(data='idle'))
             self.cancel_pub.publish(Bool(data=True))
@@ -187,16 +231,16 @@ class Supervisor:
             ready = False
             if future is not None:
                 try:
-                    ready = future.result().current_state.id == 3
+                    ready = future.result().success if name == 'g1_astar' else future.result().current_state.id == 3
                 except Exception:
                     pass
             if name == 'amcl':
                 self.amcl_ready = ready and self.mode == 'localization' and not self.transitioning
-            elif name == 'bt_navigator':
+            elif name == 'g1_astar':
                 self.navigation_ready = ready and not self.transitioning
             self.readiness[name] = ready
             if client.service_is_ready():
-                self.futures[name] = client.call_async(GetState.Request())
+                self.futures[name] = client.call_async(Trigger.Request() if name == 'g1_astar' else GetState.Request())
                 self.future_started[name] = time.monotonic()
             else:
                 self.futures.pop(name, None)
@@ -315,6 +359,10 @@ class Supervisor:
             self.error = ''
             self.mode_pub.publish(String(data='idle'))
             self.cancel_pub.publish(Bool(data=True))
+            self.guide_status = None
+            self.spoken_goal = None
+            if self.guide_profile.service_is_ready():
+                self.guide_profile.call_async(SetBool.Request(data=False))
 
             def transition():
                 try:
@@ -427,6 +475,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('Expected a JSON object')
             if self.path == '/api/rag/prepare-navigation':
                 result = self.server.supervisor.prepare_spoken_navigation(payload)
+            elif self.path == '/api/rag/gesture':
+                result = self.server.supervisor.play_gesture(payload.get('name'))
             elif self.path == '/api/rag/goal':
                 result = self.server.supervisor.send_spoken_goal(payload)
             elif self.path == '/api/rag/cancel':

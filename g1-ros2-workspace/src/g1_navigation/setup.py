@@ -25,7 +25,7 @@ setup(
     zip_safe=True,
     maintainer='abdul-rafi',
     maintainer_email='rafiabdul7128@gmail.com',
-    description='2D SLAM, Nav2, 3D LiDAR avoidance and web control for G1',
+    description='2D SLAM, A* navigation, 3D LiDAR avoidance and web control for G1',
     license='Apache-2.0',
     extras_require={'test': ['pytest']},
     entry_points={
@@ -34,6 +34,7 @@ setup(
             'cloud_filter = g1_navigation.cloud_filter:main',
             'command_mux = g1_navigation.command_mux:main',
             'retreat_guard = g1_navigation.retreat_guard:main',
+            'astar_navigator = g1_navigation.astar_navigator:main',
             'web_gateway = g1_navigation.web_gateway:main',
             'map_labels = g1_navigation.map_labels:main',
         ],

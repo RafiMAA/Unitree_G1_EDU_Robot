@@ -16,19 +16,16 @@ def agent_result(question, locations=LOCATIONS, action='none', label_id=None, na
     return agent.invoke_guidance(question,locations)
 
 @pytest.mark.parametrize('question',[
-    'Take me to the office', 'Navigate to the office', 'Where is the office?',
-    'Where can I find the office?', 'How do I get to the office?',
-    'Could you guide me to the office please?', 'Show me the way to the office',
-    'I need to find the office', 'I want to go to the office',
-    'Can you show me the office?', 'Where is the office located?',
-    'Take me to the office because I need help', 'How do I get to the office from here?',
+    'Take me to the office', 'Navigate to the office', 'Can you navigate me to the office?',
+    'Could you guide me to the office please?', 'I want to go to the office',
+    'Take me to the office because I need help',
 ])
 def test_wayfinding_requests_navigate_even_when_model_only_answers(question):
     result=agent_result(question)
     assert result['action']=='navigate'
     assert result['location_id']=='office'
 
-@pytest.mark.parametrize('question', ['Where is the restroom?', 'Take me to the offce', 'Navigate to bag cheking area'])
+@pytest.mark.parametrize('question', ['Take me to the restroom', 'Take me to the offce', 'Navigate to bag cheking area'])
 def test_synonyms_and_minor_recognition_errors(question):
     result=agent_result(question)
     assert result['action']=='navigate'
@@ -62,9 +59,12 @@ def test_unknown_place_does_not_use_model_guessed_coordinates_or_label():
     assert result['action']=='none'
 
 
-def test_contextual_and_multilingual_requests_can_use_model_resolved_name():
-    for question in ('Yes, take me there', 'මාව කාර්යාලයට රැගෙන යන්න'):
-        assert agent_result(question,action='navigate',label_id='office',name='Office')['location_id']=='office'
+def test_contextual_requests_require_an_actual_prior_offer():
+    llm=Mock(); retriever=Mock();retriever.invoke.return_value=[]
+    agent=DirectRAGAgent('en',llm,retriever)
+    assert agent.invoke_guidance('Yes, take me there',LOCATIONS)['action']=='none'
+    agent.invoke_guidance('Where is the office?',LOCATIONS)
+    assert agent.invoke_guidance('Yes, take me there',LOCATIONS)['location_id']=='office'
 
 
 def test_cancellation_has_priority_over_destination():
@@ -76,7 +76,7 @@ def test_malformed_guidance_speaks_clarification_without_moving(content):
     llm = Mock(); llm.invoke.return_value = SimpleNamespace(content=content)
     retriever = Mock(); retriever.invoke.return_value = []
     agent = DirectRAGAgent('en', llm, retriever)
-    result = agent.invoke_guidance('Take me to the office', LOCATIONS)
+    result = agent.invoke_guidance('How do airport services work?', LOCATIONS)
     assert result['answer'] and result['action'] == 'none'
     assert result['location_id'] is None
     assert len(agent.history) == 1
@@ -95,3 +95,26 @@ def test_guidance_receives_actual_map_identity_and_saved_catalog():
     assert '"map_name": "g1_map"' in prompt
     assert '"name": "Office"' in prompt
     assert 'Never invent a default airport map' in prompt
+
+@pytest.mark.parametrize('question', ['Where is the office?', 'Can you show me the office?', 'How do I get to the office?', 'Where is the office? Can you show me?'])
+def test_location_questions_offer_an_escort_without_starting(question):
+    result = agent_result(question)
+    assert result['action'] == 'none' and 'Office' in result['answer']
+
+
+def test_translated_acknowledgement_cannot_issue_model_hallucinated_goal():
+    llm=Mock(); retriever=Mock();retriever.invoke.return_value=[]
+    llm.invoke.return_value=SimpleNamespace(content=json.dumps({'answer':'Okay','action':'navigate','location_id':'office','destination_name':'Office','normalized_input':'Okay'}))
+    # Translation of the validated reply is a separate call, with no action schema.
+    llm.invoke.side_effect=[llm.invoke.return_value, SimpleNamespace(content='හරි')]
+    agent=DirectRAGAgent('si',llm,retriever)
+    result=agent.invoke_guidance('හරි',LOCATIONS)
+    assert result['action']=='none' and result['answer']=='හරි'
+
+
+def test_multilingual_escort_still_requires_a_valid_saved_destination():
+    llm=Mock(); retriever=Mock();retriever.invoke.return_value=[]
+    llm.invoke.side_effect=[SimpleNamespace(content=json.dumps({'answer':'Follow me','action':'navigate','location_id':'invented','destination_name':'Office','normalized_input':'Take me to Office'})), SimpleNamespace(content='මා සමඟ එන්න')]
+    agent=DirectRAGAgent('si',llm,retriever)
+    result=agent.invoke_guidance('මාව කාර්යාලයට රැගෙන යන්න',LOCATIONS)
+    assert result['location_id']=='office' and result['action']=='navigate'

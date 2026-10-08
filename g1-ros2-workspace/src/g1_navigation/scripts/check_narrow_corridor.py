@@ -1,4 +1,4 @@
-"""Isolated actual Humble Nav2 regression; synthetic sensors, no robot process."""
+"""Isolated actual Humble A* navigation regression; synthetic sensors, no robot process."""
 import os
 os.environ['ROS_DOMAIN_ID'] = '98'
 os.environ['ROS_LOCALHOST_ONLY'] = '1'
@@ -12,6 +12,7 @@ from nav_msgs.msg import OccupancyGrid, Odometry
 from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from nav2_msgs.srv import ClearEntireCostmap
 from lifecycle_msgs.srv import GetState, ChangeState
+from std_srvs.srv import Trigger
 from std_msgs.msg import Header, String
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py.point_cloud2 import create_cloud_xyz32
@@ -54,7 +55,7 @@ try:
     cloud_pub=node.create_publisher(PointCloud2,'/g1/mid360/points_filtered',10)
     odom_pub=node.create_publisher(Odometry,'/g1/odom',10)
     command_pub=node.create_publisher(Twist,'/cmd_vel_smoothed',10)
-    mode_pub=node.create_publisher(String,'/ui/mode',10)
+    mode_pub=node.create_publisher(String,'/ui/mode',qos)
     robot=[2.,4.,0.]; commanded=Twist(); safe=Twist(); moving=False; blocked=True; recovered=False; violation=[]; last=time.monotonic()
     def on_command(msg):
         global commanded
@@ -71,7 +72,7 @@ try:
     wall_points=[(x*.05,y,.8) for x in range(30,111) for y in (3.6,4.4)]
     def publish():
         global last, blocked, recovered
-        if moving and blocked and safe.linear.x < -.10 and 'Running backup' in Path('/tmp/g1-corridor-nav.log').read_text():
+        if moving and blocked and safe.linear.x < -.10 and 'Backing out' in Path('/tmp/g1-corridor-nav.log').read_text():
             blocked=False; recovered=True
         now=time.monotonic();dt=min(.15,now-last);last=now
         x,y,theta=robot;c,s=math.cos(theta),math.sin(theta)
@@ -95,14 +96,20 @@ try:
         if moving:command_pub.publish(commanded)
     node.create_timer(.05,publish)
     launch(['ros2','launch','g1_navigation','mapping.launch.py','start_sim:=false','start_slam:=false','start_web:=false','start_nav:=true','cmd_vel_topic:=/cmd_vel_controller'],'nav')
-    for name in ('planner_server','controller_server','behavior_server','bt_navigator'):active(name)
+    ready=node.create_client(Trigger,'/g1_astar/ready')
+    assert ready.wait_for_service(timeout_sec=15), 'A* ready service unavailable'
+    spin(.7)
+    deadline=time.monotonic()+15
+    while not wait(ready.call_async(Trigger.Request())).success:
+        assert time.monotonic()<deadline,'A* did not become ready'
+        spin(.1)
     launch(['/opt/ros/humble/lib/nav2_collision_monitor/collision_monitor','--ros-args','--params-file',str(PARAMS)],'monitor')
     for transition in (1,3):
         req=ChangeState.Request();req.transition.id=transition
         assert service(ChangeState,'/collision_monitor/change_state',req).success
     launch(['ros2','run','g1_navigation','retreat_guard'],'guard')
     deadline=time.monotonic()+10
-    while mode_pub.get_subscription_count()<1 and time.monotonic()<deadline:spin(.1)
+    while mode_pub.get_subscription_count()<4 and time.monotonic()<deadline:spin(.1)
     mode_pub.publish(String(data='navigate'));spin(1.)
     nav=ActionClient(node,NavigateToPose,'/navigate_to_pose');assert nav.wait_for_server(timeout_sec=5)
     goal=NavigateToPose.Goal();goal.pose.header.frame_id='map';goal.pose.header.stamp=node.get_clock().now().to_msg()
@@ -115,7 +122,7 @@ try:
     assert result.result().status==4,('Goal failed',result.result().status,robot)
     assert not violation,violation[:3]
     assert recovered,'Expected stalled goal to back out before resuming'
-    print('PASS: real Nav2 MPPI + Collision Monitor + final guard recovered from a stall and reached the original goal through 0.80 m corridor with padded 0.66 m body; pose:',robot,flush=True)
+    print('PASS: real A* navigation + Collision Monitor + final guard recovered from a stall and reached the original goal through 0.80 m corridor with padded 0.66 m body; pose:',robot,flush=True)
 finally:
     for p in procs:
         if p.poll() is None:os.killpg(p.pid,signal.SIGINT)

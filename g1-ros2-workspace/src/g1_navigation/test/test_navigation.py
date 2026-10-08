@@ -45,11 +45,11 @@ def test_cloud_filter_removes_floor_and_robot_but_keeps_obstacle():
 def test_navigation_yaml_has_live_cloud_and_safe_output():
     path = Path(__file__).parents[1] / 'config' / 'nav2_params.yaml'
     config = yaml.safe_load(path.read_text())
-    local = config['local_costmap']['local_costmap']['ros__parameters']
+    planner = yaml.safe_load((path.parent / 'astar_params.yaml').read_text())['g1_astar']['ros__parameters']
     collision = config['collision_monitor']['ros__parameters']
-    assert local['obstacle_layer']['mid360']['data_type'] == 'PointCloud2'
-    assert local['obstacle_layer']['mid360']['topic'].endswith('points_filtered')
-    assert local['obstacle_layer']['mid360']['clearing'] is True
+    assert planner['inflation_radius'] == .25
+    assert planner['cmd_vel_topic'] == '/cmd_vel_controller'
+    assert collision['mid360']['topic'].endswith('points_filtered')
     assert collision['cmd_vel_out_topic'] == '/cmd_vel_collision'
     assert collision['mid360']['type'] == 'pointcloud'
 
@@ -61,23 +61,17 @@ def test_compact_stop_margin_is_not_removed_as_robot_self_returns():
     assert len(filter_navigation_points(np.array([[.38, 0, .8], [-.28, 0, .8], [0, .32, .8]]))) == 0
 
 
-def test_narrow_corridor_costmaps_retain_physical_footprint_with_less_padding():
-    config = yaml.safe_load((Path(__file__).parents[1] / 'config/nav2_params.yaml').read_text())
-    for name in ('local_costmap', 'global_costmap'):
-        params = config[name][name]['ros__parameters']
-        footprint = np.array(yaml.safe_load(params['footprint']))
-        assert np.ptp(footprint[:, 1]) == .64
-        assert params['footprint_padding'] == .01
-        inflation = params['inflation_layer']
-        if name == 'global_costmap':
-            assert inflation['inflation_radius'] > np.linalg.norm(footprint, axis=1).max() + params['footprint_padding']
-        else:
-            assert inflation['inflation_radius'] <= .10
-        assert inflation['cost_scaling_factor'] == 6.0
-    controller = config['controller_server']['ros__parameters']['FollowPath']
-    assert controller['motion_model'] == 'DiffDrive'
-    assert controller['vx_min'] == 0 and controller['vy_max'] == 0
-    assert controller['primary_controller'] == 'nav2_mppi_controller::MPPIController'
-    assert controller['angular_dist_threshold'] <= .15
-    assert controller['angular_disengage_threshold'] <= .10
-    assert controller['CostCritic']['consider_footprint']
+def test_default_launches_use_standalone_astar_and_only_localization_lifecycle():
+    from unittest.mock import patch
+    from importlib.util import module_from_spec, spec_from_file_location
+    from launch_ros.actions import Node
+    root = Path(__file__).parents[1]
+    for name in ('mapping', 'navigation'):
+        spec = spec_from_file_location(name, root / 'launch' / (name + '.launch.py'))
+        module = module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with patch.object(module, 'get_package_share_directory', return_value=str(root)):
+            actions = module.generate_launch_description().entities
+        packages = {action.node_package for action in actions if isinstance(action, Node)}
+        assert 'g1_navigation' in packages
+        assert not packages.intersection({'nav2_controller','nav2_planner','nav2_bt_navigator','nav2_behaviors'})
