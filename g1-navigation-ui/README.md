@@ -48,7 +48,7 @@ Text fields do not trigger the global driving shortcuts.
 
 1. Set the map output name/path (for example `g1_map`) so labels are associated
    with that map. The basename identifies the location collection.
-2. Open **03 · Maps & Localization**, then in **Saved locations**, click **Add location**.
+2. Open **03 · Labeling locations**, then in **Saved locations**, click **Add location**.
 3. Click a white, known-free map cell, type the location name, and click
    **Save location**. Dragging pans the view without selecting a point.
 4. Purple markers show saved names. **Rename**, **Move**, and **Delete** edit
@@ -157,16 +157,20 @@ Open `http://localhost:5173`. Ctrl+C in the startup terminal stops all processes
 owned by that console. Logs are in `g1-ros2-workspace/log/console/`.
 The UI and local process-control API listen on loopback addresses.
 
-Map loading, initial-pose placement and saved-location editing are grouped under
-**03 · Maps & Localization**. Opening this tab puts robot control into idle and
-cancels active navigation. The live map remains visible for placing poses and
-labels. Returning to Mapping or Navigate closes placement tools.
+**03 · Labeling locations** contains Load map, Refresh maps, saved-location editing
+and JSON import/export, without a 2D Pose Estimate tool.
+Load a saved map and set its **2D Pose Estimate** directly in **02 · Navigate** or
+**04 · RAG Conversation**. These tabs show no map until a saved map is loaded,
+and hide the robot marker until an explicit initial pose receives an AMCL update.
+The loaded map and confirmed pose are shared when switching between those tabs.
+Navigate uses **Add goal** to enter goal-picking mode; click a free cell to send it.
+Reloading a map, including the same map, requires a new initial pose.
 
 ### Load a saved map and set the robot pose
 
 1. Save any live SLAM map you want to keep. Loading a saved map stops SLAM;
    **New mapping** begins a new SLAM session, rather than continuing a saved grid.
-2. Open **03 · Maps & Localization**. In **Saved map / localization**, choose an existing map and click **Load map**.
+2. Open **02 · Navigate** or **04 · RAG Conversation**. In **Saved map / localization**, choose an existing map and click **Load map**.
    YAML/image pairs in `src/g1_navigation/maps` and the workspace root appear in
    the library. **Refresh maps** discovers newly saved files.
 3. For files elsewhere, expand **Import a map from disk** and select the ROS map
@@ -193,7 +197,7 @@ within the saved environment. AMCL needs matching live laser scans and odometry.
 | Open UI | Process manager, rosbridge and Vite only |
 | Mapping | Perception/web gateway, SLAM and drive safety; no navigation |
 | Navigate | A* navigation and drive safety for the current map |
-| Maps & Localization | Location JSON saver; navigation and drive safety stop |
+| Labeling locations | Location JSON saver; navigation and drive safety stop |
 | Load map | Perception, map server and AMCL; no navigation until Navigate is selected |
 
 Mapping must receive a map before Navigate can start. A loaded map requires an
@@ -234,7 +238,7 @@ The implementation is adapted for the G1's ROS Humble frames, rectangular body,
 UI goals and saved location orientations; it does not run Nav2's planner,
 controller, behavior server or behavior tree.
 
-- Planning inflation: **0.25 m** in `config/astar_params.yaml`. Eight-connected
+- Planning inflation: **0.15 m** in `config/astar_params.yaml`. Eight-connected
   A* rejects occupied/unknown cells and diagonal corner cutting. A soft clearance
   cost prefers corridor centres without widening the hard inflation buffer.
   Shortcuts are accepted only when the entire segment remains clear.
@@ -282,7 +286,7 @@ own processes. Logs are `/tmp/g1-recovery-*.log`, `/tmp/g1-corridor-*.log` and
 
 ## Save and browse maps
 
-**Save new map** works while live SLAM exists, including in Maps & Localization.
+**Save new map** is in the Mapping tab while live SLAM is active.
 It saves the received occupancy grid as a YAML/PNG pair in the map library,
 preserving its resolution, origin, orientation and unknown cells. The library
 refreshes and selects the saved map. Use a unique output name; existing maps
@@ -305,6 +309,9 @@ The default conversation backend follows the project architecture:
 orchestration / FAISS retrieval → Gemini → TTS → browser speaker**.
 The UI remains a continuous **Start conversation / End conversation** interface;
 there are no record/send or typed-message controls. Speech pauses delimit turns.
+At the start, the assistant asks your name, then greets you by name and asks
+where you want to go. Say “skip” or request a destination directly to continue
+without a name. An optional prefilled name skips the spoken name question.
 TTS replies and narration share one acknowledged playback queue. Each visible
 reply finishes fully: microphone capture is paused during synthesis and playback,
 then for a 0.6-second echo tail. Speak after the reply finishes. End conversation
@@ -332,22 +339,21 @@ Startup:
 
 1. Start simulation in its own terminal with `cmd_vel_topic:=/cmd_vel_safe`.
 2. Start `npm run dev` as usual; opening the UI does not start simulation.
-3. In **Maps & Localization**, load a saved map, place **2D Pose Estimate**, and
-   wait for localization. Mark/import destination labels and their headings.
+3. In **Navigate** or **RAG Conversation**, load a saved map, place **2D Pose Estimate**,
+   and wait for localization. Use **Labeling locations** to mark/import destinations.
 4. Open **RAG Conversation**, press **Start conversation**, and allow the mic.
 5. Ask airport questions or say “Take me to [saved destination]”. A* navigation and its
    collision/velocity controls start automatically for that guidance request;
    RAG remains running. “Stop navigation” cancels guidance. Ending the voice
    session or leaving its tab cancels spoken guidance too.
 
-You can also choose **Conversation map** and click **Load conversation map**
-directly in the RAG tab. End the conversation before changing maps. Loading
+Use **Saved map / localization → Load map** directly in the RAG tab. End the conversation before changing maps. Loading
 keeps the RAG tab open, stops live SLAM, and starts saved-map localization;
 simulation remains external. The displayed saved destinations come from that
 map's `<map_name>_labels.json`, read again for each spoken turn. FAISS supplies
 airport knowledge; the selected map's label catalog supplies destination IDs
-and coordinates. Use **Set robot pose / edit labels** to open Maps & Localization,
-place the initial pose, and then return to RAG. No saved-map selection means
+and coordinates. Use **2D Pose Estimate** in RAG to place the robot. **Edit location labels**
+opens the Labeling locations tab. No saved-map selection means
 the assistant has no saved destination catalog, even when a live SLAM map exists.
 
 `GOOGLE_API_KEY` must be set in `g1-ros2-workspace/.env` or exported before
@@ -434,3 +440,10 @@ Ambiguous names such as “washroom” with east/west washrooms require clarific
 Gate/terminal/floor numbers must agree. No location outside the saved map catalog
 can become a navigation goal. Contextual phrases such as “yes, take me there”
 require an actual single prior offer; “yes” alone does not move the robot.
+
+
+The saved map picker in Labeling, Navigate and RAG is a collapsible dropdown.
+Open it to see one horizontal row per map, with a trash icon on the right. Deletion archives the YAML, unshared local image and
+matching labels under `src/g1_navigation/maps/.deleted-maps/`, with a recovery
+manifest. Shared image files are preserved. A currently loaded map must be
+replaced with another map (or leave localization via Mapping) before deletion.

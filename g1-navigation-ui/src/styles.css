@@ -162,3 +162,21 @@ aside { display: flex; flex-direction: column; gap: 12px; }
 .ragmap .maphelp { padding: 8px 12px; }
 .ragmapstatus { margin: 0; padding: 0 12px 12px; color: #9bb6c5; font-size: 12px; line-height: 1.5; }
 .ragmap .cardhead { gap: 12px; flex-wrap: wrap; }
+
+.sessioncard .savedmapdropdown { width: 100%; min-width: 0; border: 1px solid #294255; border-radius: 7px; padding: 0; }
+.sessioncard .savedmapdropdown > summary { list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 12px; color: #dceaf5; }
+.savedmapdropdown > summary::-webkit-details-marker { display: none; }
+.savedmapdropdown > summary > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.savedmapdropdown > summary[aria-disabled="true"] { opacity: .4; cursor: default; }
+.savedmapdropdown > summary:focus-visible { outline: 2px solid #52a8ff; outline-offset: -2px; }
+.savedmapcaret { flex: none; }
+.savedmapdropdown[open] .savedmapcaret { transform: rotate(180deg); }
+.sessioncard .savedmaplist { max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-top: 1px solid #294255; }
+.sessioncard .savedmaprow { display: flex; flex: none; align-items: center; gap: 6px; width: 100%; min-width: 0; padding: 3px; border: 1px solid #294255; border-radius: 5px; }
+.savedmaprow.selected { border-color: #3ce6a8; background: #12352e; }
+.savedmaprow .savedmapchoice { display: flex; align-items: center; gap: 8px; color: #dceaf5; flex: 1; min-width: 0; text-align: left; background: transparent; }
+.savedmapname { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.savedmapchevron { flex: none; color: #52a8ff; font-size: 22px; line-height: 1; }
+.savedmapchoice small { flex: none; color: #3ce6a8; font-size: 10px; }
+.savedmaprow .savedmapdelete { display: grid; place-items: center; flex: 0 0 38px; width: 38px; min-height: 38px; margin-left: auto; color: #ff8992; border: 1px solid #62313a; background: #301820; }
+.savedmaprow button:disabled { opacity: .4; cursor: default; }

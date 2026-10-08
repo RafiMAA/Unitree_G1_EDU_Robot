@@ -56,6 +56,7 @@ class Supervisor:
         self.amcl_ready = False
         self.navigation_ready = False
         self.localized = False
+        self.initial_pose_requested = False
         self.node = rclpy.create_node('g1_console_supervisor')
         mode_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.RELIABLE)
         self.mode_pub = self.node.create_publisher(String, '/ui/mode', mode_qos)
@@ -131,7 +132,7 @@ class Supervisor:
         if self.estop:
             raise ValueError('Emergency stop is engaged')
         if self.mode != 'localization' or not self.selected or self.map is None:
-            raise ValueError('Load a saved map in Maps & Localization first')
+            raise ValueError('Load a saved map in Navigate or RAG Conversation first')
         if not self.localized or not self.amcl_ready:
             raise ValueError('Set the robot initial pose and wait for AMCL localization')
         context = self.rag_context()
@@ -212,9 +213,10 @@ class Supervisor:
 
     def on_initial_pose(self, msg):
         self.localized = False
+        self.initial_pose_requested = self.mode == "localization" and not self.transitioning
 
     def on_pose(self, msg):
-        if self.mode == 'localization' and not self.transitioning:
+        if self.mode == 'localization' and not self.transitioning and getattr(self, 'initial_pose_requested', False):
             self.localized = True
 
     def poll_ready(self):
@@ -248,7 +250,8 @@ class Supervisor:
     def spawn(self, name, command, cwd=WORKSPACE):
         LOGS.mkdir(parents=True, exist_ok=True)
         with (LOGS / f'{name}.log').open('ab') as log:
-            self.processes[name] = subprocess.Popen(command, cwd=cwd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+            owned_command = ['/usr/bin/python3', str(UI / 'scripts/owned_process.py'), str(os.getpid()), *command]
+            self.processes[name] = subprocess.Popen(owned_command, cwd=cwd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         print(f'Started {name}; log: {LOGS / (name + ".log")}', flush=True)
 
     def stop(self, name):
@@ -342,18 +345,14 @@ class Supervisor:
                 tab = 'mapping' if mode == 'mapping' else 'maps'
                 selected = None
                 if mode == 'localization':
-                    if payload.get('tab') == 'rag':
-                        tab = 'rag'
+                    if payload.get('tab') in ('rag', 'navigate'):
+                        tab = payload['tab']
                     path = LIBRARY.resolve(payload.get('map_id'))
                     selected = {'id': str(path), 'name': path.stem}
             elif tab not in ('mapping', 'navigate', 'maps', 'rag'):
-                raise ValueError('Choose Mapping, Navigate, Maps & Localization or RAG Conversation')
+                raise ValueError('Choose Mapping, Navigate, Labeling locations or RAG Conversation')
             if tab == 'mapping':
                 mode, selected = 'mapping', None
-            if tab == 'navigate' and (self.mode == 'idle' or self.map is None):
-                raise ValueError('Start Mapping or load a saved map before navigating')
-            if tab == 'navigate' and self.mode == 'localization' and not self.localized:
-                raise ValueError('Set the initial pose in Maps & Localization first')
             mode = mode or self.mode
             self.transitioning = True
             self.error = ''
@@ -382,17 +381,19 @@ class Supervisor:
                     else:
                         self.stop('labels')
                         self.ensure_web()
-                        self.ensure('safety', ['ros2', 'launch', 'g1_navigation', 'safety.launch.py'])
-                    if self.mode != mode or self.selected != selected:
+                        if tab == 'mapping' or (tab == 'navigate' and mode == 'localization' and selected):
+                            self.ensure('safety', ['ros2', 'launch', 'g1_navigation', 'safety.launch.py'])
+                    if self.mode != mode or self.selected != selected or payload.get('mode') == 'localization':
                         self.stop('stack_nav')
                         self.stop('stack')
                         self.map = None
                         self.mode, self.selected = mode, selected
                         self.localized = self.amcl_ready = self.navigation_ready = False
+                        self.initial_pose_requested = False
                         self.futures.clear()
                         self.ensure_web()
                         self.launch_stack()
-                    if tab == 'navigate':
+                    if tab == 'navigate' and mode == 'localization' and selected:
                         self.ensure('stack_nav', ['ros2', 'launch', 'g1_navigation', 'mapping.launch.py',
                                                  'start_sim:=false', 'start_web:=false', 'start_slam:=false',
                                                  'start_nav:=true', 'cmd_vel_topic:=/cmd_vel_controller'])
@@ -403,6 +404,15 @@ class Supervisor:
                 finally:
                     self.transitioning = False
             threading.Thread(target=transition, daemon=True).start()
+
+    def delete_map(self, payload):
+        with self.lock:
+            if self.transitioning:
+                raise ValueError('Wait for the map or tab switch to finish')
+            identifier = payload.get('map_id')
+            if self.selected and self.selected['id'] == identifier:
+                raise ValueError('Load another map before deleting the currently loaded map')
+            return LIBRARY.delete(identifier)
 
     def status(self):
         return {'managed': True, 'tab': self.tab, 'mode': self.mode, 'selected_map': self.selected, 'transitioning': self.transitioning,
@@ -495,6 +505,8 @@ class Handler(BaseHTTPRequestHandler):
                     if supervisor.transitioning or supervisor.mode != 'mapping' or supervisor.map is None:
                         raise ValueError('Start Mapping and wait for a live map before saving')
                     result = LIBRARY.save_grid(payload.get('name'), supervisor.map)
+            elif self.path == '/api/maps/delete':
+                result = self.server.supervisor.delete_map(payload)
             elif self.path == '/api/maps/import':
                 with self.server.supervisor.lock:
                     result = LIBRARY.import_map(payload)
@@ -532,7 +544,10 @@ def main():
     ros_thread = threading.Thread(target=spin_ros, daemon=True)
     ros_thread.start()
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+    def request_shutdown(*_):
+        raise KeyboardInterrupt
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, request_shutdown)
     try:
         supervisor.start()
         tls_cert = Path(os.environ.get('G1_TLS_CERT', UI / '.phone-tls/server.crt'))

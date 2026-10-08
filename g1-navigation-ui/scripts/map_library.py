@@ -1,6 +1,8 @@
 """Validate and store Nav2 YAML/image pairs without overwriting existing maps."""
 import base64
 import io
+import json
+import uuid
 import math
 import re
 from pathlib import Path
@@ -61,6 +63,47 @@ class MapLibrary:
             if item['id'] == identifier:
                 return Path(identifier)
         raise ValueError('Choose a map from the saved map library')
+
+    def delete(self, identifier):
+        """Remove a library map by archiving owned files; preserve shared assets."""
+        path = self.resolve(identifier)
+        if path.parent not in (self.directory, self.workspace):
+            raise ValueError('Only maps inside the saved map library can be deleted')
+        document = validate_map(yaml.safe_load(path.read_text()))
+        image = Path(document['image'])
+        image = (image if image.is_absolute() else path.parent/image).resolve()
+        others = [Path(item['id']) for item in self.maps() if item['id'] != str(path)]
+        shared_image = False
+        for other in others:
+            info = yaml.safe_load(other.read_text())
+            ref = Path(info['image'])
+            if (ref if ref.is_absolute() else other.parent/ref).resolve() == image:
+                shared_image = True
+        files = [(path, Path(path.name))]
+        if (not shared_image and image.is_relative_to(path.parent)
+                and image.suffix.lower() in ('.pgm', '.png', '.bmp', '.jpg', '.jpeg')):
+            files.append((image, image.relative_to(path.parent)))
+        labels = self.directory/f'{path.stem}_labels.json'
+        if labels.is_file() and not any(other.stem == path.stem for other in others):
+            files.append((labels, Path('labels')/labels.name))
+        archive = self.directory/'.deleted-maps'/f'{path.stem}-{uuid.uuid4().hex}'
+        archive.mkdir(parents=True)
+        moved = []
+        try:
+            (archive/'manifest.json').write_text(json.dumps({
+                'files': [{'original':str(source),'archived':str(target)} for source,target in files]
+            },indent=2))
+            for source,target in files:
+                destination=archive/target
+                destination.parent.mkdir(parents=True,exist_ok=True)
+                source.rename(destination)
+                moved.append((source,destination))
+        except Exception:
+            for source,destination in reversed(moved):
+                destination.rename(source)
+            shutil.rmtree(archive)
+            raise
+        return {'deleted':str(path),'name':path.stem,'archive':str(archive)}
 
     def save_grid(self, name, grid):
         """Save the received ROS grid, including origin/orientation, atomically."""

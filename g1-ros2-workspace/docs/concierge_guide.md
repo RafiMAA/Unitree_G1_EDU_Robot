@@ -19,7 +19,7 @@ The same module is loaded by the voice environment, navigator, RL controller and
 MuJoCo bridge. Defaults: escort 0.50 m/s, 0.80 rad/s; narration every 20 seconds
 when actual progress exists, minimum 8-second gap, blocked cooldown 25 seconds,
 idle gesture every 30 seconds. Ordinary Navigate-tab speeds remain separately
-configured in `g1_navigation/config/astar_params.yaml`. Inflation remains 25 cm.
+configured in `g1_navigation/config/astar_params.yaml`. Inflation remains 15 cm.
 
 * “Take/guide/navigate me to …” uses RapidFuzz only against the current map's label
   catalog, then validates map identity, free space, localization and readiness.

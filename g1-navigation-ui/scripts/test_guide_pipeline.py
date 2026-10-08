@@ -17,7 +17,7 @@ class Turns:
 
 
 class GuidePipelineTests(unittest.IsolatedAsyncioTestCase):
-    async def run_case(self, words, scenario, auto_playback=True, tts_callback=None, prepare_callback=None, initialize=True, stt_callback=None):
+    async def run_case(self, words, scenario, auto_playback=True, tts_callback=None, prepare_callback=None, initialize=True, stt_callback=None, runtime=None):
         ws = Socket(); trace = []; context = {'map_id':'test.yaml', 'locations':[
             {'id':'office','text':'Office','x':2.,'y':0.},
             {'id':'entrance','text':'Entrance','x':0.,'y':3.}], 'navigation':{}}
@@ -45,7 +45,7 @@ class GuidePipelineTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(wait(), 3.)
         async def speak(): await ws.queue.put(b'\x00\x00'*640)
         with patch.dict(__import__('pipeline_rag').CONFIG['speech'], microphone_tail_seconds=.02), patch('pipeline_rag.SpeechTurns', Turns), patch('g1_conversation.stt_engine.STTEngine',return_value=stt), patch('g1_conversation.tts_engine.TTSEngine',return_value=tts):
-            task=asyncio.create_task(pipeline_session(ws,NS(create_agent=Mock()),'en','',16000,request))
+            task=asyncio.create_task(pipeline_session(ws,runtime or NS(create_agent=Mock()),'en','',16000,request))
             try:
                 if initialize:
                     await until(lambda:any(e['type']=='turn_complete' for e in ws.sent))
@@ -55,6 +55,24 @@ class GuidePipelineTests(unittest.IsolatedAsyncioTestCase):
                 await ws.queue.put(None)
                 await asyncio.wait_for(task, 3.)
         return ws,trace
+
+    async def test_spoken_name_is_remembered_for_rag_then_navigation_still_works(self):
+        from collections import deque
+        agent=NS(memory_window=8,history=deque(),invoke_guidance=Mock(return_value={
+            'answer':'The information desk can help.', 'action':'none'}))
+        runtime=NS(create_agent=Mock(return_value=agent))
+        async def scenario(ws,trace,context,speak,until):
+            await speak()
+            await until(lambda:any(e['type']=='turn_complete' for e in ws.sent))
+            self.assertTrue(any(e['type']=='passenger_name' and e['name']=='Rafi' for e in ws.sent))
+            self.assertTrue(any(e['type']=='transcript' and 'Nice to meet you, Rafi' in e.get('text','') for e in ws.sent))
+            self.assertFalse(any(route=='goal' for route,_ in trace))
+            await speak()
+            await until(lambda:sum(e['type']=='turn_complete' for e in ws.sent)==2)
+            self.assertEqual(runtime.create_agent.call_args.kwargs['passenger_name'],'Rafi')
+            await speak()
+            await until(lambda:any(route=='goal' for route,_ in trace))
+        await self.run_case(['My name is Rafi','What services are available?','Take me to Office'],scenario,runtime=runtime)
 
     async def test_passenger_cannot_interrupt_invitation_and_goal_waits_for_playback(self):
         async def scenario(ws,trace,context,speak,until):

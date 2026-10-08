@@ -46,7 +46,7 @@ flowchart LR
   conversation text on ROS.
 - Simulation remains a separate process. Spoken requests launch only the A* navigation
   and safety processes needed for guidance after a saved map is localized.
-  Planning uses 0.25 m inflation, eight-connected A* and forward lookahead
+  Planning uses 0.15 m inflation, eight-connected A* and forward lookahead
   tracking with heading alignment. Full-body grid checks and direction-aware
   Collision Monitor preserve physical clearance. A bounded 30 cm backup after
   three seconds without progress replans and retries the same goal.

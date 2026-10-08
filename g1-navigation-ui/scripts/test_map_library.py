@@ -27,6 +27,32 @@ class MapLibraryTests(unittest.TestCase):
         self.assertTrue((Path(result['id']).parent / document['image']).is_file())
         self.assertEqual(MapLibrary(self.root / 'maps', self.root).maps(), [result])
 
+    def test_delete_archives_pair_and_labels_without_destroying_files(self):
+        result=self.library.import_map(self.payload)
+        path=Path(result['id'])
+        image=path.parent/yaml.safe_load(path.read_text())['image']
+        labels=self.library.directory/'office_labels.json';labels.write_text('[]')
+        deleted=self.library.delete(result['id'])
+        archive=Path(deleted['archive'])
+        self.assertEqual(self.library.maps(),[])
+        self.assertFalse(path.exists());self.assertFalse(image.exists());self.assertFalse(labels.exists())
+        self.assertTrue((archive/'office.yaml').is_file())
+        self.assertTrue((archive/image.relative_to(path.parent)).is_file())
+        self.assertEqual((archive/'labels/office_labels.json').read_text(),'[]')
+
+    def test_delete_preserves_image_shared_by_another_map(self):
+        result=self.library.import_map(self.payload)
+        path=Path(result['id']);image=path.parent/yaml.safe_load(path.read_text())['image']
+        other=path.parent/'other.yaml';other.write_text(path.read_text())
+        self.library.delete(result['id'])
+        self.assertTrue(image.is_file())
+        self.assertEqual(self.library.maps(),[{'id':str(other),'name':'other'}])
+
+    def test_delete_rejects_arbitrary_files_outside_library(self):
+        external=self.root/'external.txt';external.write_text('preserve')
+        with self.assertRaises(ValueError):self.library.delete(str(external))
+        self.assertEqual(external.read_text(),'preserve')
+
     def test_existing_map_is_never_overwritten(self):
         result = self.library.import_map(self.payload)
         original = Path(result['id']).read_bytes()

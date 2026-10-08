@@ -1,0 +1,10 @@
+free_thresh: 0.196
+image: g1_map_4_assets_d6ne2wtw/g1_map_4.png
+mode: trinary
+negate: 0
+occupied_thresh: 0.65
+origin:
+- -1.003885936894922
+- -3.282419065764804
+- 0.0
+resolution: 0.05000000074505806

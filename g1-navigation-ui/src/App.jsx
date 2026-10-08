@@ -63,6 +63,7 @@ export default function App() {
   const [mapSaving, setMapSaving] = useState(false);
   const consoleSession = useConsoleSession();
   const session = consoleSession.session;
+  const [goalPicking, setGoalPicking] = useState(false);
   const [posePicking, setPosePicking] = useState(false);
   const [mapSwitching, setMapSwitching] = useState(false);
   const switching = mapSwitching || Boolean(session?.transitioning);
@@ -181,6 +182,7 @@ export default function App() {
       setLabelPicking(false);
       setLabelDraft(null);
       setPosePicking(false);
+      setGoalPicking(false);
       setStatus({ state: "ready", message: nextMode === "mapping" ? "Drive to build the map" : nextMode === "navigate" ? "Click the map to set a goal" : "Robot idle" });
     },
     [publish],
@@ -303,6 +305,7 @@ export default function App() {
     const yaw = robotPose
       ? Math.atan2(world.y - robotPose.position.y, world.x - robotPose.position.x)
       : 0;
+    setGoalPicking(false);
     setGoal({ world });
     publish(TOPICS.goal[0], {
       header: { stamp: nowStamp(), frame_id: "map" },
@@ -331,7 +334,7 @@ export default function App() {
     setPosePicking(false);
     setMapSwitching(true);
     try {
-      await consoleSession.request("/api/session", { mode: nextMode, map_id: mapId });
+      await consoleSession.request("/api/session", { mode: nextMode, map_id: mapId, tab: activeTab });
       setMap(null); setRobotPose(null); setPath([]); setGoal(null);
     } finally { setMapSwitching(false); }
   };
@@ -372,7 +375,7 @@ export default function App() {
   const canPose = connected && Boolean(map) && session?.mode === "localization" && session.amcl_ready && !switching && !estop;
   const poseTool = () => {
     stopMotion(); publish(TOPICS.cancel[0], { data: true });
-    setLabelPicking(false); setLabelDraft(null);
+    setLabelPicking(false); setLabelDraft(null); setGoalPicking(false);
     setPosePicking(previous => !previous);
   };
   const setInitialPose = ({ world, yaw }) => {
@@ -381,9 +384,10 @@ export default function App() {
       setStatus({ state: "rejected", message: "Place the robot on a known, free map cell" });
       return;
     }
+    setRobotPose(null);
     publish(TOPICS.initialPose[0], initialPoseMessage(world, yaw));
     setPosePicking(false);
-    setStatus({ state: "localizing", message: "Initial pose sent. Wait for localization, then select Navigate." });
+    setStatus({ state: "localizing", message: "Initial pose sent. Wait for localization before setting a goal or requesting guidance." });
   };
 
   const saveMap = async () => {
@@ -397,6 +401,12 @@ export default function App() {
       setStatus({ state: "error", message: error.message });
     } finally { setMapSaving(false); }
   };
+
+  const savedMapLoaded = session?.mode === "localization" && Boolean(session.selected_map) && !switching;
+  const visibleMap = activeTab === "navigate" ? savedMapLoaded ? map : null : map;
+  const visibleRobotPose = session?.mode === "localization" && !session.localized ? null : robotPose;
+  const canNavigateGoal = activeTab === "navigate" && savedMapLoaded && session.localized &&
+    session.navigation_ready && session.safety_ready && connected && !estop;
 
   const press = (key) => {
     // Mirror terminal teleop: each click latches one direction, zeroes others.
@@ -416,28 +426,36 @@ export default function App() {
       <section className="modebar">
         <button disabled={switching} className={activeTab === "mapping" ? "active" : ""} onClick={() => selectTab("mapping")}>01 · Mapping</button>
         <button disabled={switching} className={activeTab === "navigate" ? "active" : ""} onClick={() => selectTab("navigate")}>02 · Navigate</button>
-        <button disabled={switching} className={activeTab === "maps" ? "active" : ""} onClick={() => selectTab("maps")}>03 · Maps & Localization</button>
+        <button disabled={switching} className={activeTab === "maps" ? "active" : ""} onClick={() => selectTab("maps")}>03 · Labeling locations</button>
         <button disabled={switching} className={activeTab === "rag" ? "active" : ""} onClick={() => selectTab("rag")}>04 · RAG Conversation</button>
         <button onClick={() => { publish(TOPICS.cancel[0], { data: true }); setControlMode("idle"); }}>Cancel / Idle</button>
         <button className={`estop ${estop ? "engaged" : ""}`} onClick={toggleEstop}>{estop ? "Release E-stop" : "Emergency stop"}</button>
       </section>
 
       {activeTab === "rag" && <RagPanel navigationStatus={status} consoleSession={consoleSession} onOpenMaps={() => selectTab("maps")}
-        map={map} robotPose={robotPose} path={path} connected={connected} />}
+        map={savedMapLoaded ? map : null} robotPose={savedMapLoaded && session.localized ? robotPose : null} path={savedMapLoaded && session.localized ? path : []} connected={connected}
+        onSwitchMap={switchMap} posePicking={posePicking} onPoseTool={poseTool} canPose={canPose} onInitialPose={setInitialPose} />}
       <section className="workspace" hidden={activeTab === "rag"}>
         <div className="mapcard">
-          <div className="cardhead"><span>LIVE OCCUPANCY MAP</span><span>{map ? `${map.info.width} × ${map.info.height} · ${map.info.resolution.toFixed(2)} m/cell` : "WAITING FOR /map"}</span></div>
-          <MapView map={map} robotPose={robotPose} goal={goal} path={path}
-            canSetGoal={mode === "navigate" && !estop && !labelPicking && !labelDraft && !posePicking && !switching && (!session || (session.safety_ready && session.navigation_ready && (session.mode !== "localization" || session.localized)))} onGoal={mapGoal}
-            labels={labelStore.labels} labelDraft={labelDraft} labelPicking={labelPicking} onLabelPoint={pickLabel} posePicking={posePicking} onInitialPose={setInitialPose} staticMap={session?.mode === "localization"} />
+          <div className="cardhead"><span>LIVE OCCUPANCY MAP</span><span>{visibleMap ? `${visibleMap.info.width} × ${visibleMap.info.height} · ${visibleMap.info.resolution.toFixed(2)} m/cell` : "WAITING FOR /map"}</span></div>
+          {activeTab !== "navigate" || savedMapLoaded ? <MapView key={session?.selected_map?.id || activeTab} map={visibleMap} robotPose={visibleRobotPose} goal={savedMapLoaded || activeTab !== "navigate" ? goal : null} path={savedMapLoaded || activeTab !== "navigate" ? path : []}
+            canSetGoal={canNavigateGoal && goalPicking} onGoal={mapGoal}
+            labels={labelStore.labels} labelDraft={labelDraft} labelPicking={labelPicking} onLabelPoint={pickLabel} posePicking={activeTab === "navigate" && posePicking} onInitialPose={setInitialPose} staticMap={session?.mode === "localization"} /> : <p className="hint">Load a saved map using the controls beside this panel, then set the robot's initial pose.</p>}
           <div className="legend"><span><i className="robot" /> G1</span><span><i className="route" /> planned path</span><span><i className="target" /> goal</span><span><i className="location" /> location</span></div>
         </div>
 
         <aside>
           <div className={`statuscard ${status.state}`}><p>ROBOT STATUS</p><strong>{status.message}</strong>{status.distance_remaining != null && <small>{status.distance_remaining.toFixed(2)} m remaining</small>}</div>
+          {activeTab === "navigate" && <>
+            <MapSessionPanel consoleSession={consoleSession} onSwitch={switchMap}
+              posePicking={posePicking} onPoseTool={poseTool} canPose={canPose} showNewMapping={false} />
+            <div className="savecard"><button disabled={!canNavigateGoal} className={goalPicking ? "active" : ""}
+              onClick={() => { setPosePicking(false); setGoalPicking(value => !value); }}>{goalPicking ? "Cancel goal selection" : "Add goal"}</button>
+              <p className="hint">{goalPicking ? "Click a free map cell to send the goal." : "Load a map, set the initial pose, then click Add goal."}</p></div>
+          </>}
           <div className="mapmanagement" hidden={activeTab !== "maps"}>
-          <MapSessionPanel consoleSession={consoleSession} onSwitch={switchMap}
-            posePicking={posePicking} onPoseTool={poseTool} canPose={canPose} />
+          <MapSessionPanel consoleSession={consoleSession} onSwitch={switchMap} showPose={false} showNewMapping={false} />
+          <p className="hint">Load a saved map, then mark and save locations here. Set the robot pose in Navigate or RAG Conversation.</p>
           <LabelsPanel store={labelStore} draft={labelDraft} setDraft={setLabelDraft}
             picking={labelPicking} setPicking={setLabelPicking} beginPicking={beginLabelPicking} />
           </div>
@@ -485,10 +503,10 @@ export default function App() {
               <p className="hint">WASD + QE · +/− speed · SPACE stop · Commands latch until changed</p>
             </div>
           )}
-          <div className="savecard">
+          {activeTab === "mapping" && <div className="savecard">
             <label htmlFor="map-name">MAP NAME</label>
             <div><input id="map-name" disabled={switching || session?.mode === "localization"} value={mapName} onChange={(event) => setMapName(event.target.value)} /><button disabled={!map || !session || switching || mapSaving || session.mode !== "mapping"} onClick={saveMap}>{mapSaving ? "Saving…" : "Save new map"}</button></div>
-          </div>
+          </div>}
           <div className="limits"><span>PLANAR FLOOR MODE</span><p>No stair, drop-off, hole or footstep-planning support. Keep a physical E-stop and safety operator present.</p></div>
         </aside>
       </section>

@@ -116,10 +116,10 @@ def segment_clear(blocked, start, end, clearance=None, min_clearance=0.):
     return True
 
 
-def plan_path(grid, start, goal, radius=.25):
+def plan_path(grid, start, goal, radius=.15):
     blocked = grid.planning_mask(radius)
     # Soft clearance preference centres narrow corridors without enlarging the
-    # hard 25 cm buffer. The octile heuristic stays admissible (costs >= 1).
+    # hard 15 cm buffer. The octile heuristic stays admissible (costs >= 1).
     distance = distance_transform_edt(~grid.raw_blocked)*grid.resolution
     traversal = 1.+.5*np.clip((.5-distance)/.25,0.,1.)
     cells = astar_cells(blocked, grid.world_to_cell(*start), grid.world_to_cell(*goal), traversal_cost=traversal)
@@ -157,32 +157,74 @@ def tracking_command(pose, target, remaining, align=False, max_speed=.65, max_tu
     return speed, turn, False
 
 
-def body_clear(grid, pose):
-    """Exact rectangle/grid-cell overlap via the separating-axis theorem."""
+def footprint_cells(grid, pose):
+    """Return exact padded-body cell overlaps, plus whether it fits inside the map."""
     x,y,yaw = pose
     ox,oy,oyaw = grid.origin
     relative = yaw-oyaw
     c,s = math.cos(relative),math.sin(relative)
-    # Padded body x[-.29,.39], y[-.33,.33], centred 5 cm forward.
     cx = ((x-ox)*math.cos(oyaw)+(y-oy)*math.sin(oyaw))+.05*c
     cy = (-(x-ox)*math.sin(oyaw)+(y-oy)*math.cos(oyaw))+.05*s
     ex,ey = .34*abs(c)+.33*abs(s),.34*abs(s)+.33*abs(c)
-    if cx-ex < 0 or cy-ey < 0 or cx+ex >= grid.width*grid.resolution or cy+ey >= grid.height*grid.resolution:
-        return False
-    x0,x1 = int((cx-ex)/grid.resolution),int((cx+ex)/grid.resolution)
-    y0,y1 = int((cy-ey)/grid.resolution),int((cy+ey)/grid.resolution)
-    ys,xs = np.nonzero(grid.raw_blocked[y0:y1+1,x0:x1+1])
-    if not len(xs):
-        return True
-    dx,dy = (xs+x0+.5)*grid.resolution-cx,(ys+y0+.5)*grid.resolution-cy
+    inside = cx-ex >= 0 and cy-ey >= 0 and cx+ex < grid.width*grid.resolution and cy+ey < grid.height*grid.resolution
+    x0,x1 = max(0,math.floor((cx-ex)/grid.resolution)),min(grid.width-1,math.floor((cx+ex)/grid.resolution))
+    y0,y1 = max(0,math.floor((cy-ey)/grid.resolution)),min(grid.height-1,math.floor((cy+ey)/grid.resolution))
+    ys,xs = np.mgrid[y0:y1+1,x0:x1+1]
+    dx,dy = (xs+.5)*grid.resolution-cx,(ys+.5)*grid.resolution-cy
     half = grid.resolution/2
     overlap = ((np.abs(dx*c+dy*s) <= .34+half*(abs(c)+abs(s)))
                & (np.abs(-dx*s+dy*c) <= .33+half*(abs(c)+abs(s)))
                & (np.abs(dx) <= ex+half) & (np.abs(dy) <= ey+half))
-    return not np.any(overlap)
+    return inside, ys[overlap], xs[overlap]
 
 
-def motion_clear(grid, pose, vx, wz, horizon=1.):
+def starting_footprint_holes(grid, pose):
+    """Snapshot self-occlusion gaps in the body's initial turning envelope.
+
+    SLAM can leave unknown cells where the robot started mapping. Include the
+    padded footprint's rotation sweep so the first alignment turn can leave
+    that gap. This fixed patch never follows the robot, never clears occupied
+    cells, and never edits the saved map. Live obstacles are overlaid afterwards.
+    """
+    inside, _, _ = footprint_cells(grid, pose)
+    centre=grid.world_to_cell(*pose[:2])
+    if not inside or not grid.contains(centre) or grid.data[centre[1],centre[0]] != 0:
+        return ()
+    radius=max(math.hypot(x,y) for x,y in PADDED_FOOTPRINT)+grid.resolution/math.sqrt(2)
+    x,y=centre;cells=math.ceil(radius/grid.resolution)+1
+    result=[]
+    for row in range(max(0,y-cells),min(grid.height,y+cells+1)):
+        for col in range(max(0,x-cells),min(grid.width,x+cells+1)):
+            point=grid.cell_to_world(col,row)
+            if grid.data[row,col]<0 and math.dist(pose[:2],point)<=radius:
+                result.append(point)
+    return tuple(result)
+
+
+def clear_starting_holes(grid, holes):
+    if not holes:
+        return grid
+    data = grid.data.copy()
+    for point in holes:
+        x,y = grid.world_to_cell(*point)
+        if grid.contains((x,y)) and data[y,x] < 0:
+            data[y,x] = 0
+    return GridMap(data,grid.resolution,grid.origin)
+
+
+def body_clear(grid, pose):
+    """Exact rectangle/grid-cell overlap via the separating-axis theorem."""
+    inside,ys,xs = footprint_cells(grid,pose)
+    return inside and not np.any(grid.raw_blocked[ys,xs])
+
+
+def motion_clear(grid, pose, vx, wz, horizon=1., obstacle_points=None):
+    """Check map cell areas and live obstacle points at their exact positions.
+
+    Rasterizing a live point outside the body into a whole occupied cell can
+    falsely overlap the body at t=0 and prevent every escape motion.
+    """
+    points = np.asarray(obstacle_points if obstacle_points is not None else []).reshape(-1,2)
     x,y,yaw = pose
     for dt in np.linspace(0.,horizon,max(2,math.ceil(horizon/.05)+1)):
         theta = yaw+wz*dt
@@ -192,4 +234,10 @@ def motion_clear(grid, pose, vx, wz, horizon=1.):
             px,py = x+vx/wz*(math.sin(theta)-math.sin(yaw)),y-vx/wz*(math.cos(theta)-math.cos(yaw))
         if not body_clear(grid,(px,py,theta)):
             return False
+        if len(points):
+            dx,dy = points[:,0]-px,points[:,1]-py
+            bx = dx*math.cos(theta)+dy*math.sin(theta)
+            by = -dx*math.sin(theta)+dy*math.cos(theta)
+            if np.any((bx >= -.29) & (bx <= .39) & (np.abs(by) <= .33)):
+                return False
     return True

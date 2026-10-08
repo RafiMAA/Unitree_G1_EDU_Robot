@@ -1,0 +1,16 @@
+{
+  "files": [
+    {
+      "original": "/home/intellisense02/Desktop/Rafi_Unitree_sem_Project/Unitree_G1_EDU_Robot_recovered/g1-ros2-workspace/src/g1_navigation/maps/g1_map__android.yaml",
+      "archived": "g1_map__android.yaml"
+    },
+    {
+      "original": "/home/intellisense02/Desktop/Rafi_Unitree_sem_Project/Unitree_G1_EDU_Robot_recovered/g1-ros2-workspace/src/g1_navigation/maps/g1_map__android_assets_crgbbuqj/g1_map__android.png",
+      "archived": "g1_map__android_assets_crgbbuqj/g1_map__android.png"
+    },
+    {
+      "original": "/home/intellisense02/Desktop/Rafi_Unitree_sem_Project/Unitree_G1_EDU_Robot_recovered/g1-ros2-workspace/src/g1_navigation/maps/g1_map__android_labels.json",
+      "archived": "labels/g1_map__android_labels.json"
+    }
+  ]
+}

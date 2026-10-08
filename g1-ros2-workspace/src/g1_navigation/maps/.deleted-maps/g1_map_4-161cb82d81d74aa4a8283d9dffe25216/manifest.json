@@ -1,0 +1,16 @@
+{
+  "files": [
+    {
+      "original": "/home/intellisense02/Desktop/Rafi_Unitree_sem_Project/Unitree_G1_EDU_Robot_recovered/g1-ros2-workspace/src/g1_navigation/maps/g1_map_4.yaml",
+      "archived": "g1_map_4.yaml"
+    },
+    {
+      "original": "/home/intellisense02/Desktop/Rafi_Unitree_sem_Project/Unitree_G1_EDU_Robot_recovered/g1-ros2-workspace/src/g1_navigation/maps/g1_map_4_assets_d6ne2wtw/g1_map_4.png",
+      "archived": "g1_map_4_assets_d6ne2wtw/g1_map_4.png"
+    },
+    {
+      "original": "/home/intellisense02/Desktop/Rafi_Unitree_sem_Project/Unitree_G1_EDU_Robot_recovered/g1-ros2-workspace/src/g1_navigation/maps/g1_map_4_labels.json",
+      "archived": "labels/g1_map_4_labels.json"
+    }
+  ]
+}

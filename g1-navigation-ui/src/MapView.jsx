@@ -71,7 +71,6 @@ export default function MapView({ map, robotPose, goal, path, canSetGoal, onGoal
   }, [map, validMap]);
 
   useEffect(() => {
-    if (!bitmap) return;
     const canvas = canvasRef.current;
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(size.width * dpr);
@@ -79,6 +78,7 @@ export default function MapView({ map, robotPose, goal, path, canSetGoal, onGoal
     const ctx = canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size.width, size.height);
+    if (!bitmap) return;
     ctx.imageSmoothingEnabled = false;
     ctx.save();
     ctx.translate(size.width / 2, size.height / 2);

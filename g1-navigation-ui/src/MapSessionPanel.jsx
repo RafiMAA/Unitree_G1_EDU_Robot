@@ -7,7 +7,7 @@ const readBase64 = file => new Promise((resolve, reject) => {
   reader.readAsDataURL(file);
 });
 
-export default function MapSessionPanel({ consoleSession, onSwitch, posePicking, onPoseTool, canPose }) {
+export default function MapSessionPanel({ consoleSession, onSwitch, posePicking, onPoseTool, canPose, disabled = false, showNewMapping = true, showPose = true }) {
   const { session, error, request, refresh } = consoleSession;
   const [selected, setSelected] = useState("");
   const [yaml, setYaml] = useState(null);
@@ -15,7 +15,7 @@ export default function MapSessionPanel({ consoleSession, onSwitch, posePicking,
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const yamlInput = useRef(null), imageInput = useRef(null);
+  const yamlInput = useRef(null), imageInput = useRef(null), dropdown = useRef(null);
   const knownMaps = useRef(new Set());
   const loadedMap = useRef(null);
   useEffect(() => {
@@ -55,23 +55,50 @@ export default function MapSessionPanel({ consoleSession, onSwitch, posePicking,
     setMessage(`Imported ${result.name}. Click Load map to localize.`);
     if (load) { await onSwitch("localization", result.id); setMessage(`Loading ${result.name}…`); }
   });
-  const unavailable = !session || session.transitioning || busy;
+  const unavailable = !session || session.transitioning || busy || disabled;
+  useEffect(() => {
+    if (unavailable && dropdown.current) dropdown.current.open = false;
+  }, [unavailable]);
   return <div className="savecard sessioncard">
-    <label>SAVED MAP / LOCALIZATION</label>
+    <label>{showPose ? "SAVED MAP / LOCALIZATION" : "SAVED MAPS"}</label>
     {error && <p className="labelerror">{error}</p>}
-    <p className="hint">{session?.transitioning ? "Switching ROS processes…" : session?.mode === "localization" ? `Loaded: ${session.selected_map?.name} · ${session.localized ? "Pose estimate received" : "Set the robot's initial pose"}` : session?.mode === "mapping" ? "Live SLAM mapping" : "Choose Mapping or load a saved map"}</p>
+    <p className="hint">{session?.transitioning ? "Switching ROS processes…" : session?.mode === "localization" ? `Loaded: ${session.selected_map?.name} · ${session.localized ? "Pose estimate received" : showPose ? "Set the robot's initial pose" : "Ready for location labels"}` : session?.mode === "mapping" ? "Live SLAM mapping" : "Choose Mapping or load a saved map"}</p>
     {session?.mode === "mapping" && <p className="hint">Save the current map before loading another; loading stops this SLAM session.</p>}
-    <select aria-label="Saved map" value={selected} onChange={event => setSelected(event.target.value)} disabled={unavailable}>
-      <option value="">Choose an existing map</option>
-      {(session?.maps || []).map(map => <option key={map.id} value={map.id}>{map.name}</option>)}
-    </select>
+    <details className="savedmapdropdown" ref={dropdown} onKeyDown={event => {
+      if (event.key === "Escape") { event.preventDefault(); dropdown.current.open = false; dropdown.current.querySelector("summary").focus(); }
+    }}>
+      <summary aria-label="Choose a saved map" aria-disabled={unavailable}
+        onClick={event => { if (unavailable) event.preventDefault(); }}
+        onKeyDown={event => { if (unavailable && ["Enter", " "].includes(event.key)) event.preventDefault(); }}>
+        <span>{(session?.maps || []).find(map => map.id === selected)?.name || "Choose an existing map"}</span>
+        <span className="savedmapcaret" aria-hidden="true">⌄</span>
+      </summary>
+    <div className="savedmaplist" role="group" aria-label="Saved maps">
+      {!(session?.maps || []).length && <p className="hint">No saved maps. Import a map or save one in Mapping.</p>}
+      {(session?.maps || []).map(map => <div key={map.id} className={`savedmaprow ${selected === map.id ? "selected" : ""}`}>
+        <button className="savedmapchoice" aria-pressed={selected === map.id} disabled={unavailable}
+          title={map.name} onClick={() => { setSelected(map.id); dropdown.current.open = false; dropdown.current.querySelector("summary").focus({ preventScroll: true }); }}>
+          <span className="savedmapchevron" aria-hidden="true">›</span><span className="savedmapname">{map.name}</span>{session?.selected_map?.id === map.id && <small>Loaded</small>}</button>
+        <button className="savedmapdelete" aria-label={`Delete map ${map.name}`}
+          title={session?.selected_map?.id === map.id ? "Load another map before deleting this map" : `Delete ${map.name}`}
+          disabled={unavailable || session?.selected_map?.id === map.id} onClick={() => {
+            if (!window.confirm(`Delete map “${map.name}” and its saved locations? The files will be archived for recovery.`)) return;
+            run(async () => {
+              await request("/api/maps/delete", { map_id: map.id });
+              if (selected === map.id) setSelected("");
+              setMessage(`Deleted ${map.name}.`);
+            });
+          }}><svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></svg></button>
+      </div>)}
+    </div>
+    </details>
     <div className="sessionactions">
       <button disabled={unavailable || !selected} onClick={() => run(() => onSwitch("localization", selected))}>Load map</button>
       <button disabled={unavailable} onClick={() => run(async () => { const current = await refresh(); setMessage(`${current.maps.length} saved map(s) available.`); })}>Refresh maps</button>
-      <button disabled={unavailable} onClick={() => run(() => onSwitch("mapping"))}>{session?.mode === "mapping" ? "Continue mapping" : "New mapping"}</button>
+      {showNewMapping && <button disabled={unavailable} onClick={() => run(() => onSwitch("mapping"))}>{session?.mode === "mapping" ? "Continue mapping" : "New mapping"}</button>}
     </div>
-    <button className={posePicking ? "active" : ""} disabled={!canPose || busy} onClick={onPoseTool}>{posePicking ? "Cancel initial pose" : "2D Pose Estimate"}</button>
-    <p className="hint">Click and drag on free space: start = position, arrow = heading. Release to set the estimate.</p>
+    {showPose && <><button className={posePicking ? "active" : ""} disabled={!canPose || unavailable} onClick={onPoseTool}>{posePicking ? "Cancel initial pose" : "2D Pose Estimate"}</button>
+    <p className="hint">Click and drag on free space: start = position, arrow = heading. Release to set the estimate.</p></>}
     <details><summary>Import a map from disk</summary>
       <label>1. Map YAML<input ref={yamlInput} type="file" accept=".yaml,.yml" disabled={unavailable} onChange={event => { const file = event.target.files[0]; setYaml(file || null); setMessage(""); setName(file ? availableName(file.name) : ""); }} /></label>
       <label>2. Map image<input ref={imageInput} type="file" accept=".pgm,.png,.bmp,.jpg,.jpeg" disabled={unavailable} onChange={event => { setImage(event.target.files[0] || null); setMessage(""); }} /></label>

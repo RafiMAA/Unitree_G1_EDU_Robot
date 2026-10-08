@@ -26,7 +26,7 @@ in another terminal. Load a saved map and set the actual robot pose with the
 
 Navigation parameters: `config/astar_params.yaml`:
 
-- Inflation radius **0.25 m**, forward limit **0.65 m/s**, turn limit **1 rad/s**.
+- Inflation radius **0.15 m**, forward limit **0.65 m/s**, turn limit **1 rad/s**.
 - Eight-connected A*, no corner cutting or unknown-space traversal.
 - Lookahead **0.6 m**, turn before walking, apply the goal orientation on arrival.
 - Full padded body checks on the map and live LiDAR; collision monitoring and
@@ -56,3 +56,16 @@ sourcing the workspace. They start no robot and do not test locomotion dynamics.
 
 This is planar indoor navigation. Terrain, stairs and footstep planning remain
 outside this implementation.
+
+
+### Saved-map starting gaps
+
+Some SLAM maps have a small unknown patch where the robot stood during mapping.
+A* may find a centreline route while the padded body cannot make its initial turn.
+At goal acceptance, the navigator snapshots unknown cells inside the starting
+body's turning envelope, provided its centre is a known free cell. This fixed,
+transient patch allows departure and never follows the moving robot. Occupied
+map cells and fresh cloud obstacles are still blocking; unknown space beyond
+that starting patch remains blocked. Planning inflation remains 0.15 m. Saved
+map images and labels are not edited. Incorrect AMCL poses still require a new
+2D Pose Estimate in Maps & Localization.

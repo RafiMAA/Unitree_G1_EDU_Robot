@@ -47,7 +47,7 @@ def test_navigation_yaml_has_live_cloud_and_safe_output():
     config = yaml.safe_load(path.read_text())
     planner = yaml.safe_load((path.parent / 'astar_params.yaml').read_text())['g1_astar']['ros__parameters']
     collision = config['collision_monitor']['ros__parameters']
-    assert planner['inflation_radius'] == .25
+    assert planner['inflation_radius'] == .15
     assert planner['cmd_vel_topic'] == '/cmd_vel_controller'
     assert collision['mid360']['topic'].endswith('points_filtered')
     assert collision['cmd_vel_out_topic'] == '/cmd_vel_collision'

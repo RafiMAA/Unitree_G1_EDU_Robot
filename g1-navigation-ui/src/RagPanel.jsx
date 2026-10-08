@@ -1,39 +1,35 @@
 import React, { useEffect, useRef, useState } from "react";
+import MapSessionPanel from "./MapSessionPanel.jsx";
 import MapView from "./MapView.jsx";
 import { LiveAudio } from "./liveAudio.js";
 
 const LANGUAGES = { en: "English", fr: "Français", de: "Deutsch", es: "Español", ru: "Русский", ja: "日本語", zh: "中文", ko: "한국어", hi: "हिंदी", si: "සිංහල", ta: "தமிழ்" };
 
-export default function RagPanel({ navigationStatus, consoleSession, onOpenMaps, map, robotPose, path = [], connected }) {
+export default function RagPanel({ navigationStatus, consoleSession, onOpenMaps, map, robotPose, path = [], connected, onSwitchMap, posePicking, onPoseTool, canPose, onInitialPose }) {
   const [backend, setBackend] = useState(null);
   const [mapContext, setMapContext] = useState(null);
   const [navigation, setNavigation] = useState(null);
   const [messages, setMessages] = useState([]);
   const [name, setName] = useState("");
+  const [passengerName, setPassengerName] = useState("");
   const [language, setLanguage] = useState("en");
   const [phase, setPhase] = useState("idle");
   const [speaking, setSpeaking] = useState(false);
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState("");
-  const [selectedMap, setSelectedMap] = useState("");
-  const [mapBusy, setMapBusy] = useState(false);
   const session = consoleSession?.session;
   const mounted = useRef(false), generation = useRef(0), socket = useRef(null), audio = useRef(null), log = useRef(null), timeout = useRef(null), active = useRef(false);
   const supported = window.isSecureContext && Boolean(navigator.mediaDevices?.getUserMedia) && Boolean(window.AudioWorkletNode);
   const ready = backend?.ready && backend?.configured;
   const running = phase !== "idle";
-  const changingMap = mapBusy || session?.transitioning;
-
-  useEffect(() => {
-    setSelectedMap(session?.selected_map?.id || "");
-  }, [session?.selected_map?.id]);
+  const changingMap = session?.transitioning;
 
   const end = (message = "") => {
     active.current = false; generation.current += 1; clearTimeout(timeout.current);
     const ws = socket.current; socket.current = null;
     if (ws) { ws.onclose = ws.onerror = ws.onmessage = null; ws.close(); }
     const capture = audio.current; audio.current = null; capture?.close();
-    if (mounted.current) { setPhase("idle"); setSpeaking(false); setMuted(false); if (message) setError(message); }
+    if (mounted.current) { setPhase("idle"); setSpeaking(false); setMuted(false); setPassengerName(""); if (message) setError(message); }
   };
 
   useEffect(() => {
@@ -60,7 +56,7 @@ export default function RagPanel({ navigationStatus, consoleSession, onOpenMaps,
   const start = async () => {
     if (!ready || !supported || active.current) return;
     active.current = true; const turn = ++generation.current;
-    setError(""); setMessages([]); setNavigation(null); setPhase("Connecting"); setMuted(false);
+    setError(""); setMessages([]); setNavigation(null); setPhase("Connecting"); setMuted(false); setPassengerName(name.trim());
     try {
       const capture = new LiveAudio(packet => {
         const ws = socket.current;
@@ -92,6 +88,7 @@ export default function RagPanel({ navigationStatus, consoleSession, onOpenMaps,
               setError(`Reply audio could not play: ${err.message}. Please try again.`);
             }
           });
+          else if (result.type === "passenger_name") setPassengerName(result.name);
           else if (result.type === "notice") setError(result.message);
           else if (result.type === "navigation") setNavigation(result);
           else if (result.type === "listening") capture.setListening(result.enabled);
@@ -116,14 +113,6 @@ export default function RagPanel({ navigationStatus, consoleSession, onOpenMaps,
     const value = !muted; audio.current?.mute(value); setMuted(value);
     if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ type: "mute", value }));
   };
-  const loadMap = async () => {
-    if (!selectedMap || running || changingMap) return;
-    setMapBusy(true); setError(""); setMessages([]); setNavigation(null); setMapContext(null);
-    try {
-      await consoleSession.request("/api/session", { mode: "localization", map_id: selectedMap, tab: "rag" });
-    } catch (err) { setError(err.message); }
-    finally { setMapBusy(false); }
-  };
   const contextMatchesMap = mapContext?.map_id === session?.selected_map?.id;
   const destinations = contextMatchesMap ? mapContext?.locations || [] : [];
   const escortStatus = contextMatchesMap ? mapContext?.navigation : null;
@@ -138,26 +127,21 @@ export default function RagPanel({ navigationStatus, consoleSession, onOpenMaps,
       <p>Start once and talk naturally. Your airport assistant listens, replies aloud, and stays ready for your next question. Listen to the full reply, then speak when it finishes. The microphone pauses during replies to prevent speaker echo.</p>
       <div className="ragsettings">
         <label>Language<select value={language} disabled={running} onChange={event => setLanguage(event.target.value)}>{Object.entries(LANGUAGES).map(([code, title]) => <option key={code} value={code}>{title}</option>)}</select></label>
-        <label>Your name (optional)<input maxLength={60} value={name} disabled={running} onChange={event => setName(event.target.value)} /></label>
+        <label>Your name (optional — or tell the assistant)<input maxLength={60} value={name} disabled={running} onChange={event => setName(event.target.value)} /></label>
       </div>
       {backend?.error && <p className="labelerror" role="status">{backend.error}</p>}
       {backend?.ready && !backend.configured && <p className="labelerror">Set GOOGLE_API_KEY on the computer or in the workspace .env, then restart the UI. Your key stays on the computer.</p>}
       {!supported && <p className="labelerror">Live microphone access needs HTTPS on your phone, or localhost on this computer, and a browser with AudioWorklet support.</p>}
       <div className="voice-navigation">
         <strong>Spoken destination → A* navigation</strong>
-        <label>Conversation map<select aria-label="Conversation map" value={selectedMap} disabled={running || changingMap || !session} onChange={event => setSelectedMap(event.target.value)}>
-          <option value="">Choose a labeled saved map</option>
-          {(session?.maps || []).map(map => <option key={map.id} value={map.id}>{map.name}</option>)}
-        </select></label>
-        <div className="ragactions">
-          <button disabled={running || changingMap || !selectedMap} onClick={loadMap}>{changingMap ? "Loading map…" : "Load conversation map"}</button>
-          <button disabled={changingMap || !consoleSession} onClick={async () => { try { await consoleSession.refresh(); } catch (err) { setError(err.message); } }}>Refresh maps</button>
-          <button disabled={changingMap || !onOpenMaps} onClick={() => { end(); onOpenMaps(); }}>Set robot pose / edit labels</button>
-        </div>
+        <MapSessionPanel consoleSession={consoleSession} onSwitch={onSwitchMap}
+          posePicking={posePicking} onPoseTool={onPoseTool} canPose={canPose}
+          showNewMapping={false} disabled={running} />
+        <div className="ragactions"><button disabled={changingMap || !onOpenMaps} onClick={() => { end(); onOpenMaps(); }}>Edit location labels</button></div>
         {session?.mode === "mapping" && <p className="hint">Live SLAM is active. Loading a saved map stops this mapping session; save your new map in Mapping first.</p>}
         {running && <p className="hint">End the conversation before changing maps.</p>}
         {session?.error && <p className="labelerror" role="status">{session.error}</p>}
-        <p>{mapContext?.map_name ? `Map: ${mapContext.map_name} · ${mapContext.localized ? "Robot localized" : "Set initial pose in Maps & Localization"}` : "Load a saved map and set the robot pose in Maps & Localization before requesting guidance."}</p>
+        <p>{mapContext?.map_name ? `Map: ${mapContext.map_name} · ${mapContext.localized ? "Robot localized" : "Set the initial pose below"}` : "Load a saved map and set the robot pose here before requesting guidance."}</p>
         <p>{mapContext?.locations?.length ? `Saved destinations: ${mapContext.locations.map(item => item.text).join(", ")}` : "No saved destinations for the loaded map."}</p>
         <p>Say “Take me to [saved location]” to request guidance, or “Stop navigation” to cancel.</p>
         {navigation && <p role="status">{navigation.message || navigation.state}</p>}
@@ -165,16 +149,17 @@ export default function RagPanel({ navigationStatus, consoleSession, onOpenMaps,
       </div>
       <section className="mapcard ragmap" aria-label="Live conversation map">
         <div className="cardhead"><span>LIVE ROBOT MAP</span><span>{changingMap ? "Loading map…" : session?.selected_map?.name || "No map loaded"}</span></div>
-        <MapView key={session?.selected_map?.id || "live"} map={changingMap ? null : map}
+        {map ? <MapView key={session?.selected_map?.id || "live"} map={changingMap ? null : map}
           robotPose={changingMap ? null : robotPose} path={changingMap ? [] : path}
-          goal={changingMap ? null : escortGoal} labels={changingMap ? [] : destinations}
-          canSetGoal={false} staticMap={session?.mode === "localization"} />
+          goal={changingMap || !map || !session?.localized ? null : escortGoal} labels={changingMap || !map ? [] : destinations}
+          canSetGoal={false} posePicking={!running && posePicking} onInitialPose={onInitialPose} staticMap={session?.mode === "localization"} /> : <p className="hint">Load a saved map above to display it, then use 2D Pose Estimate to place the robot.</p>}
         <div className="legend"><span><i className="robot" /> Robot / heading</span><span><i className="route" /> Route</span><span><i className="target" /> Destination</span><span><i className="location" /> Saved location</span></div>
-        <p className="ragmapstatus" role="status">{!connected ? "ROS disconnected — waiting for live robot updates." : !robotPose || !mapContext?.localized ? "Set the robot's initial pose in Maps & Localization to track it on this map." : "Robot position updates live as it follows your spoken destination."}{Number.isFinite(remaining) && ` ${remaining.toFixed(2)} m remaining.`}</p>
+        <p className="ragmapstatus" role="status">{!connected ? "ROS disconnected — waiting for live robot updates." : !robotPose || !mapContext?.localized ? "Set the robot's initial pose here to track it on this map." : "Robot position updates live as it follows your spoken destination."}{Number.isFinite(remaining) && ` ${remaining.toFixed(2)} m remaining.`}</p>
       </section>
       <div className={`livevoice ${running ? "running" : ""} ${speaking ? "speaking" : ""}`}>
         <div className="voiceorb" aria-hidden="true">◉</div>
         <strong role="status">{state}</strong>
+        {running && passengerName && <p>Passenger: {passengerName}</p>}
         <p>{running ? "Keep talking — no record or send buttons needed." : "Press Start conversation and allow the microphone."}</p>
       </div>
       <div className="ragactions liveactions">

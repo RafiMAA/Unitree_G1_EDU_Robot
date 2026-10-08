@@ -114,3 +114,53 @@ def extract_passenger_name(text: str) -> str | None:
 def get_airport_introduction(lang_code: str, name: str) -> str:
     template = AIRPORT_INTRODUCTIONS.get(lang_code, AIRPORT_INTRODUCTIONS["en"])
     return template.format(name=name)
+
+
+NAME_QUESTIONS = {
+    'en': "Hello! I’m an airport guide. What is your name?",
+    'fr': "Bonjour ! Je suis votre guide à l'aéroport. Comment vous appelez-vous ? Vous pouvez aussi dire skip.",
+    'de': "Hallo! Ich bin Ihr Flughafenführer. Wie heißen Sie? Sie können auch skip sagen.",
+    'es': "¡Hola! Soy su guía del aeropuerto. ¿Cómo se llama? También puede decir skip.",
+    'ru': "Здравствуйте! Я ваш гид в аэропорту. Как вас зовут? Можно также сказать skip.",
+    'ja': "こんにちは！空港の案内係です。お名前を教えてください。skip と言って省略できます。",
+    'zh': "您好！我是您的机场向导。请问您叫什么名字？也可以说 skip 跳过。",
+    'ko': "안녕하세요! 공항 안내 도우미입니다. 성함이 어떻게 되세요? skip이라고 말하면 건너뛸 수 있습니다.",
+    'hi': "नमस्ते! मैं आपका हवाई अड्डा गाइड हूँ। आपका नाम क्या है? आप skip भी कह सकते हैं।",
+    'si': "ආයුබෝවන්! මම ඔබේ ගුවන්තොටුපළ මාර්ගෝපදේශකයා. ඔබේ නම කුමක්ද? නම නොකියා ඉදිරියට යන්න skip කියන්න.",
+    'ta': "வணக்கம்! நான் உங்கள் விமான நிலைய வழிகாட்டி. உங்கள் பெயர் என்ன? skip என்று சொல்லி தவிர்க்கலாம்.",
+}
+
+
+class PassengerNameStep:
+    """Session-only spoken name prompt; destination requests can bypass it."""
+    def __init__(self, language='en', name=''):
+        self.language = language
+        self.name = name.strip()
+        self.pending = not bool(self.name)
+
+    def greeting(self):
+        return (NAME_QUESTIONS.get(self.language, NAME_QUESTIONS['en']) if self.pending
+                else get_airport_introduction(self.language, self.name))
+
+    def reply(self, text, locations=()):
+        if not self.pending:
+            return None
+        plain = re.sub(r"[^\w\s]", '', text.casefold()).strip()
+        if plain in ('skip', 'skip name', 'no thanks', 'prefer not to say', 'i dont want to say my name'):
+            self.pending = False
+            return get_airport_introduction(self.language, 'passenger')
+        # Don't consume a place, control command or acknowledgement as a name.
+        place_names = {re.sub(r"[^\w\s]", '', loc['text'].casefold()).strip() for loc in locations}
+        if plain in place_names or plain in ('stop', 'stop navigation', 'cancel', 'wait', 'goodbye', 'bye'):
+            self.pending = False
+            return None
+        if plain in ('okay', 'ok', 'yes', 'sure', 'hello', 'hi', 'hey', 'thanks', 'thank you'):
+            return NAME_QUESTIONS.get(self.language, NAME_QUESTIONS['en'])
+        name = extract_passenger_name(text)
+        if name:
+            self.name, self.pending = name, False
+            return get_airport_introduction(self.language, name)
+        # A full question or navigation request is handled normally, without
+        # making a passenger provide a name before getting help.
+        self.pending = False
+        return None

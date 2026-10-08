@@ -30,7 +30,7 @@ from std_srvs.srv import Trigger, SetBool
 from g1_core.guide_behavior import CONFIG
 from tf2_ros import Buffer, TransformException, TransformListener
 
-from .astar import PADDED_FOOTPRINT, GridMap, angle_error, motion_clear, plan_path, tracking_command
+from .astar import PADDED_FOOTPRINT, GridMap, angle_error, motion_clear, plan_path, tracking_command, starting_footprint_holes, clear_starting_holes
 
 
 def yaw_of(q):
@@ -57,12 +57,13 @@ class Job:
     guide: bool = False
     face_yaw: float = None
     face_done: bool = False
+    starting_holes: tuple = ()
 
 
 class AStarNavigator(Node):
     def __init__(self):
         super().__init__('g1_astar')
-        self.radius = float(self.declare_parameter('inflation_radius', .25).value)
+        self.radius = float(self.declare_parameter('inflation_radius', .15).value)
         self.max_speed = float(self.declare_parameter('max_speed', .65).value)
         self.max_turn = float(self.declare_parameter('max_turn', 1.).value)
         self.lookahead = float(self.declare_parameter('lookahead_distance', .6).value)
@@ -83,6 +84,7 @@ class AStarNavigator(Node):
         self.cloud_stamp = None
         self.grid_cache_key = None
         self.collision_grid = None
+        self.motion_grid = None
         self.mode = 'idle'
         self.estop = False
         self.job = None
@@ -207,6 +209,9 @@ class AStarNavigator(Node):
         with self.lock:
             self.stop_job('canceled','Previous goal replaced')
             job = Job(handle,(p.position.x,p.position.y),yaw_of(p.orientation), guide=self.guide_profile)
+            job.starting_holes = starting_footprint_holes(self.grid, self.pose())
+            if job.starting_holes:
+                self.get_logger().info(f'Allowing departure from {len(job.starting_holes)} unmapped cells in the starting turn envelope')
             if job.guide and self.user_pose is not None:
                 user = self.user_pose
                 age = self.get_clock().now().nanoseconds/1e9 - (user.header.stamp.sec+user.header.stamp.nanosec/1e9)
@@ -268,11 +273,18 @@ class AStarNavigator(Node):
         self.cmd_pub.publish(Twist())
 
     def get_grid(self):
-        key = (id(self.grid),self.cloud_stamp)
+        key = (id(self.grid),self.cloud_stamp,id(self.job))
         if key != self.grid_cache_key:
-            self.collision_grid = self.grid.with_points(self.cloud_world)
+            grid = clear_starting_holes(self.grid, self.job.starting_holes if self.job else ())
+            self.motion_grid = grid
+            # Overlay current obstacles last: even an occupied starting cell blocks motion.
+            self.collision_grid = grid.with_points(self.cloud_world)
             self.grid_cache_key = key
         return self.collision_grid
+
+    def movement_clear(self, pose, vx, wz, horizon=1.):
+        return motion_clear(self.motion_grid, pose, vx, wz, horizon,
+                            obstacle_points=self.cloud_world)
 
     def plan(self, job, pose, grid):
         job.last_plan = time.monotonic()
@@ -320,7 +332,7 @@ class AStarNavigator(Node):
                     job.progress_time = now
                 else:
                     cmd.angular.z = math.copysign(min(self.max_turn, max(.12, abs(error))), error)
-                    if not motion_clear(grid, pose, 0., cmd.angular.z, .5):
+                    if not self.movement_clear(pose, 0., cmd.angular.z, .5):
                         cmd.angular.z = 0.
                     self.cmd_pub.publish(cmd)
                     self.report('facing_user', 'Facing the passenger before escorting')
@@ -333,7 +345,7 @@ class AStarNavigator(Node):
                 job.progress_pose,job.progress_time = pose,now
             if job.recovery_pose is not None:
                 if (math.dist(pose[:2],job.recovery_pose[:2]) >= .30 or now-job.recovery_time >= 4.
-                        or not motion_clear(grid,pose,-.15,0.,.5)):
+                        or not self.movement_clear(pose,-.15,0.,.5)):
                     job.recovery_pose = None
                     job.progress_pose,job.progress_time = pose,now
                     job.align = True
@@ -381,11 +393,11 @@ class AStarNavigator(Node):
                         break
                 vx,wz,job.align = tracking_command(pose,target,remaining,job.align,self.max_speed,self.max_turn,self.lookahead)
                 cmd.linear.x,cmd.angular.z = vx,wz
-            if not motion_clear(grid,pose,cmd.linear.x,cmd.angular.z):
+            if not self.movement_clear(pose,cmd.linear.x,cmd.angular.z):
                 # Slow to a collision-checked short horizon before declaring a stall.
                 cmd.linear.x *= .25
                 cmd.angular.z *= .25
-                if not motion_clear(grid,pose,cmd.linear.x,cmd.angular.z,.5):
+                if not self.movement_clear(pose,cmd.linear.x,cmd.angular.z,.5):
                     cmd = Twist()
                 self.report('blocked','Checking clearance and replanning around obstacles')
             else:

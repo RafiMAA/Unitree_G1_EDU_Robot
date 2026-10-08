@@ -49,8 +49,7 @@ class TabTests(unittest.TestCase):
         stack = c.processes['stack']
         grid = c.map = object()
         self.switch({'tab': 'navigate'})
-        self.assertIn('stack_nav', c.processes)
-        self.assertIn('start_slam:=false', self.commands['stack_nav'])
+        self.assertNotIn('stack_nav', c.processes)  # Saved map is loaded in Navigate first.
         self.assertIs(c.processes['stack'], stack)
         self.switch({'tab': 'maps'})
         self.assertEqual(set(c.processes), {'web', 'stack', 'labels'})
@@ -59,6 +58,20 @@ class TabTests(unittest.TestCase):
         self.switch({'tab': 'mapping'})
         self.assertIs(c.processes['stack'], stack)
         self.assertNotIn('labels', c.processes)
+
+    def test_delete_rejects_loaded_map_and_switch_in_progress(self):
+        c=self.console;c.selected={'id':'loaded.yaml','name':'loaded'}
+        with patch('console_server.LIBRARY.delete') as delete:
+            with self.assertRaisesRegex(ValueError,'currently loaded'):
+                c.delete_map({'map_id':'loaded.yaml'})
+            delete.assert_not_called()
+            c.transitioning=True
+            with self.assertRaisesRegex(ValueError,'switch'):
+                c.delete_map({'map_id':'other.yaml'})
+            delete.assert_not_called()
+            c.transitioning=False
+            c.delete_map({'map_id':'other.yaml'})
+            delete.assert_called_once_with('other.yaml')
 
     def test_maps_first_starts_only_label_saver(self):
         self.switch({'tab': 'maps'})
@@ -73,18 +86,35 @@ class TabTests(unittest.TestCase):
         self.assertEqual(set(self.console.processes), {'labels', 'web', 'stack'})
         self.assertIn('start_nav:=false', self.commands['stack'])
         self.assertIn('start_sim:=false', self.commands['stack'])
-        with self.assertRaisesRegex(ValueError, 'initial pose'):
-            self.console.map = object()
-            self.console.switch({'tab': 'navigate'})
-        self.console.localized = True
+        self.console.map = object()
         self.switch({'tab': 'navigate'})
+        self.assertFalse(self.console.localized)
         self.assertIn('stack_nav', self.console.processes)
         self.assertNotIn('labels', self.console.processes)
 
-    def test_navigation_without_a_map_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, 'load a saved map'):
-            self.console.switch({'tab': 'navigate'})
-        self.assertEqual(self.console.processes, {})
+    def test_navigation_without_a_map_opens_load_controls_without_planner(self):
+        self.switch({'tab':'navigate'})
+        self.assertEqual(self.console.tab,'navigate')
+        self.assertEqual(set(self.console.processes), {'web'})
+        self.assertFalse(self.console.localized)
+
+    def test_navigate_load_keeps_tab_and_requires_explicit_pose(self):
+        from pathlib import Path
+        c=self.console
+        with patch('console_server.LIBRARY.resolve',return_value=Path('/tmp/airport.yaml')):
+            self.switch({'mode':'localization','map_id':'airport','tab':'navigate'})
+            self.assertEqual(c.tab,'navigate')
+            self.assertIn('stack_nav',c.processes)
+            c.on_pose(Mock())
+            self.assertFalse(c.localized)  # AMCL's default pose cannot reveal the robot.
+            c.on_initial_pose(Mock())
+            self.assertFalse(c.localized)
+            c.on_pose(Mock())
+            self.assertTrue(c.localized)
+            self.switch({'mode':'localization','map_id':'airport','tab':'navigate'})
+            self.assertFalse(c.localized)  # Reloading the same map needs a new pose too.
+            c.on_pose(Mock())
+            self.assertFalse(c.localized)
 
     def test_conversation_can_load_saved_map_without_leaving_rag_or_starting_nav(self):
         from pathlib import Path
@@ -142,7 +172,7 @@ class TabTests(unittest.TestCase):
         self.assertIs(c.processes['stack'], stack)
         self.switch({'tab': 'navigate'})
         self.assertNotIn('rag', c.processes)
-        self.assertIn('stack_nav', c.processes)
+        self.assertNotIn('stack_nav', c.processes)  # Load a saved map to navigate.
 
     def spoken_setup(self):
         from types import SimpleNamespace as NS

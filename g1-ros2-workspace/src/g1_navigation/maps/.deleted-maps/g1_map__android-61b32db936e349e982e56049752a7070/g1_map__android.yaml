@@ -1,0 +1,10 @@
+free_thresh: 0.196
+image: g1_map__android_assets_crgbbuqj/g1_map__android.png
+mode: trinary
+negate: 0
+occupied_thresh: 0.65
+origin:
+- -1.0316818590615977
+- -14.987531690731789
+- 0.0
+resolution: 0.05000000074505806

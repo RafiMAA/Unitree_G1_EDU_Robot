@@ -85,7 +85,7 @@ class SpeechTurns:
 async def pipeline_session(websocket, runtime, language, name, sample_rate, request=console_request):
     from g1_conversation.stt_engine import STTEngine
     from g1_conversation.tts_engine import TTSEngine
-    from g1_conversation.onboarding import get_airport_introduction
+    from g1_conversation.onboarding import PassengerNameStep
     from g1_conversation.agent.dialogue import GuideDialogue, GuideNarrator
     from g1_core.guide_behavior import CONFIG
     import logging
@@ -104,6 +104,7 @@ async def pipeline_session(websocket, runtime, language, name, sample_rate, requ
     agent, generation, serial = None, 0, 0
     tts_lock = threading.Lock()
     speech_cache = {}
+    onboarding = PassengerNameStep(language, name)
     dialogue = GuideDialogue()
     narrator = GuideNarrator(dialogue)
     queue = asyncio.Queue(maxsize=1)
@@ -332,19 +333,25 @@ async def pipeline_session(websocket, runtime, language, name, sample_rate, requ
             stage = 'greeting'
             try:
                 if recording is None:
-                    answer = dialogue.phrases.say('greet') if language == 'en' else get_airport_introduction(language, name or 'passenger')
+                    answer = onboarding.greeting()
                     await say(answer, current, gesture_name='greet')
                     continue
                 text = recording
                 stage = 'destination context'
                 context = await current_work(work('feedback', request, 'context'), current)
+                introduction = onboarding.reply(text, context.get('locations', []))
+                if introduction:
+                    if onboarding.name:
+                        await emit('passenger_name', name=onboarding.name)
+                    await say(introduction, current)
+                    continue
                 # Stop/wait is handled without waiting for retrieval or Gemini.
                 decision = dialogue.decide(text, context.get('locations', []), context) if language == 'en' else {'answer': None}
                 if decision['answer'] is None:
                     stage = 'airport knowledge / Gemini'
                     await emit('state', state='Retrieving airport knowledge / Gemini')
                     if agent is None:
-                        agent = await current_work(work('rag', runtime.create_agent, lang_code=language, passenger_name=name or None, max_tokens=256), current)
+                        agent = await current_work(work('rag', runtime.create_agent, lang_code=language, passenger_name=onboarding.name or None, max_tokens=256), current)
                         if isinstance(getattr(agent, 'memory_window', None), int):
                             agent.dialogue = dialogue
                             agent.history.extend(history[-agent.memory_window:])
