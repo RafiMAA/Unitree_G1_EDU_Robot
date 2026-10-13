@@ -1,151 +1,194 @@
-# Unitree G1 EDU Robot
+# Humanoid Airport Concierge · Unitree G1 EDU
 
-Software stack for the Unitree G1 EDU humanoid, built as a university capstone project for airport passenger assistance. The repository spans three layers: low-level RL locomotion control in simulation, 2D/3D mapping and Nav2-based navigation, and a voice-driven RAG conversational agent that lets the G1 act as an airport mobility concierge.
+**From conversation to intelligent action.**
 
-<p align="center">
-  <img src="images/unitree_g1_architecture.png" alt="Unitree G1 Communication Architecture" width="800">
-</p>
+An Embedded Systems Individual Project exploring how a humanoid robot can answer airport passenger questions, understand destination requests, and provide indoor guidance. The system combines a grounded voice assistant, a browser navigation console, LiDAR mapping, and simulated humanoid locomotion.
 
-See [`Robot_Architecture.md`](Robot_Architecture.md) for a full breakdown of how the cloud service, the robot's onboard computers (PC1/PC2), the Unitree Explore app, and external developer tooling communicate over MQTT, HTTP, WebRTC, BLE, and DDS.
+![Humanoid Airport Concierge project showcase](images/airport_concierge_showcase.png)
 
-## Run the complete navigation console
+**University of Moratuwa · Embedded Systems Individual Project**
 
-After the ROS workspace has been built, start simulation separately using the
-[console guide](g1-navigation-ui/README.md). This command starts the React UI,
-local process manager and rosbridge; each tab starts its own ROS services:
+**ROS 2 Humble · MuJoCo · A* Navigation · Whisper · FAISS · Gemini · RapidFuzz · React**
 
-```bash
-source ~/.nvm/nvm.sh
-nvm use 22
-cd g1-navigation-ui
-npm run dev
+[System architecture](#system-architecture) · [Getting started](#getting-started) · [Documentation](#documentation) · [Project report](docs/report/g1_paper.pdf)
+
+## Project overview
+
+Airport passengers often need help finding boarding gates, washrooms, baggage areas, and other services. This project investigates a conversational approach to that assistance: ask a question, receive an answer grounded in airport information, and explicitly request guidance to a location on the loaded map.
+
+The showcase presents mapping, a recorded conversation demonstration, navigation in MuJoCo, and the system architecture. Generated walking footage illustrates the concept; the engineering demonstrations use simulation.
+
+## Key capabilities
+
+- **Grounded conversation:** Whisper speech recognition, FAISS knowledge retrieval, Gemini responses, and synthesized speech.
+- **Spoken destination requests:** a dialogue guard uses **RapidFuzz** to match explicit guidance requests to saved map locations, with clarification for ambiguous matches.
+- **Mapping and localization:** SLAM Toolbox builds occupancy maps; AMCL localizes the robot on a saved map using an explicit initial pose.
+- **Indoor navigation:** eight-connected A* planning, lookahead/P-heading control, live obstacle checks, and bounded recovery.
+- **Browser console:** manual mapping, saved-map import, location labels, goal selection, and continuous voice interaction.
+- **Humanoid simulation:** ONNX locomotion control, a MuJoCo/ROS 2 bridge, and compact greeting, pointing, and guidance gestures.
+
+## Current implementation
+
+The primary workflow runs in **MuJoCo with ROS 2 Humble**. The browser voice pipeline can hand validated saved-location goals to the navigator and report progress from navigation feedback.
+
+Navigation has evolved from an earlier Nav2 planning stack to a **standalone A* planner and controller**. Nav2 components remain in use for the map server, AMCL, velocity smoothing, and Collision Monitor. The existing `NavigateToPose` action interface is retained. Earlier showcase footage and research material may describe the previous Nav2 planning stage.
+
+Physical deployment and evaluation with airport passengers remain future work. Reported simulation checks and offline tests are described in the [guide documentation](g1-ros2-workspace/docs/concierge_guide.md#validation-results).
+
+## System architecture
+
+```mermaid
+flowchart TB
+    subgraph Conversation[Conversation and knowledge]
+        Mic[Browser microphone] --> VAD[WebRTC voice activity detection]
+        VAD --> STT[Whisper speech to text]
+        STT --> Agent[Conversation agent]
+        Agent --> Retrieval[FAISS airport knowledge]
+        Retrieval --> Gemini[Gemini grounded response]
+        Gemini --> TTS[Text to speech]
+        TTS --> Speaker[Browser speaker]
+    end
+
+    subgraph Guidance[Destination validation and guidance]
+        Agent --> Guard[Dialogue guard and RapidFuzz matching]
+        Labels[Saved map location labels] --> Guard
+        Guard --> Goal[Validated saved-location goal]
+    end
+
+    subgraph Navigation[Mapping and navigation]
+        Sensors[LiDAR and odometry] --> SLAM[SLAM Toolbox]
+        SLAM --> Map[Occupancy map]
+        Map --> AMCL[AMCL localization]
+        Pose[Initial pose estimate] --> AMCL
+        AMCL --> Goal
+        Goal --> Planner[A* planner and lookahead controller]
+        Planner --> Safety[Velocity smoother and collision checks]
+        Safety --> Locomotion[ONNX locomotion controller]
+        Locomotion --> G1[MuJoCo G1 simulation]
+        G1 --> Feedback[Navigation status and progress]
+        Feedback --> Agent
+    end
 ```
 
-Stop earlier mapping/UI launches first; keep your separate simulator running. Open `http://localhost:5173`.
-The UI can import saved YAML/image map pairs, switch from SLAM to AMCL, and set
-an RViz-style initial pose by dragging an arrow. See the
-[console guide](g1-navigation-ui/README.md) for map loading, labels and setup.
+**Airport knowledge and robot destinations have different sources.** FAISS retrieves information for answers. The selected map's saved labels provide destination IDs, positions, and orientations. Navigation coordinates come from that catalog, with localization, readiness, free-space, and emergency-stop checks before movement.
 
-## What's in here
+**RapidFuzz handles destination-name matching.** Names are normalized and common synonyms are resolved before fuzzy comparison against saved labels and aliases. The resolver tolerates small spelling or recognition differences, requires a clear best match, and preserves gate, terminal, and floor numbers. Unknown or ambiguous destinations require clarification.
 
-| Area | Package | Description |
-|---|---|---|
-| Locomotion | [`g1_core`](g1-ros2-workspace/src/g1_core) | ONNX-based RL policy state machine and keyboard teleop (`/cmd_vel`) |
-| Simulation | [`g1_mujoco`](g1-ros2-workspace/src/g1_mujoco) | MuJoCo bridge node exposing the simulated G1 as ROS2 topics |
-| Simulation | `unitree_mujoco`, `unitree_rl_mjlab` | Git submodules — Unitree's simulator and RL training environment |
-| Mapping | [`g1_mapping`](g1-ros2-workspace/src/g1_mapping) | Live voxelized 3D mapping and RViz visualization from LiDAR |
-| Navigation | [`g1_navigation`](g1-ros2-workspace/src/g1_navigation) | SLAM Toolbox + Nav2 integration, point cloud filtering, command arbitration, and a browser-based control gateway |
-| Web UI | [`g1-navigation-ui`](g1-navigation-ui) | React/Vite front end for driving, mapping, and sending navigation goals |
-| Conversational AI | [`g1_conversation`](g1-ros2-workspace/src/g1_conversation) | Multilingual RAG voice assistant for airport wayfinding and passenger services |
+For detailed implementation and validation limits, see [Browser voice and navigation](g1-ros2-workspace/docs/browser_voice_navigation.md). The separate [robot communication architecture](Robot_Architecture.md) describes onboard computers, cloud services, and Unitree interfaces.
 
-Each package with its own operational quirks has a dedicated README — see [`g1_mapping/README.md`](g1-ros2-workspace/src/g1_mapping/README.md) and [`g1_navigation/README.md`](g1-ros2-workspace/src/g1_navigation/README.md) for detailed run instructions.
+## Example passenger interaction
 
-## Airport Passenger Assistant
+1. Load a saved map, set the robot's initial pose, and prepare named destinations.
+2. Start a conversation. The assistant asks for the passenger's name and destination.
+3. Ask **“Where is the office?”** The assistant identifies the saved destination and offers guidance.
+4. Say **“Take me to the office”** or **“Take me there”** after a single prior offer to request an escort.
+5. The system validates the destination and begins guidance after the spoken invitation starts playing.
+6. Navigation feedback drives progress, arrival, or failure narration. **“Stop navigation”** cancels guidance.
 
-The flagship application (`g1_conversation`) turns the G1 into a passenger-facing assistant for finding places and services within an airport:
+Use a location actually saved on the selected map. Ambiguous names trigger clarification; acknowledgements such as “yes” or “thanks” alone do not initiate movement. Multilingual intents use translation and pass through the same destination validation.
 
-```
-Mic → WebRTC VAD → Whisper STT → LangChain RAG Agent (Gemini + FAISS) → edge-tts → G1 Speaker
-```
+## Repository components
 
-- Detects speech with WebRTC VAD, transcribes it locally with Whisper (`faster-whisper` / `openai-whisper`).
-- Runs a LangChain agent grounded in a FAISS knowledge base (airport wayfinding, passenger journeys and airport services) embedded via Gemini — answers stay within approved sources.
-- Replies with `edge-tts` synthesized speech played through the robot.
-- Handles multilingual onboarding (English, French, German, Spanish, Russian, Japanese, Chinese, Korean, Hindi, Sinhala, Tamil) and mid-conversation language switching.
-- Clears passenger name and session data as soon as a session ends — no PII persists between passengers.
-- Publishes intermediate state (transcriptions, agent responses, session events) as ROS2 topics for monitoring.
-
-The voice agent provides grounded passenger information and spoken wayfinding assistance. The navigation console separately handles maps, initial pose, saved locations and physical navigation; the RAG agent does not yet send navigation goals. Exact airport routes require verified local layout data.
-
-## Prerequisites
-
-- Ubuntu 24.04 with **ROS2 Jazzy**
-- Python 3.10+
-- Node.js 18+ (for the navigation UI)
-- MuJoCo (via the `unitree_mujoco` submodule) for simulation
-- A Gemini API key for the conversation agent's embeddings and RAG generation
+| Component | Role |
+| --- | --- |
+| [`g1_core`](g1-ros2-workspace/src/g1_core) | ONNX locomotion state machine, teleoperation, and shared guide gestures |
+| [`g1_mujoco`](g1-ros2-workspace/src/g1_mujoco) | MuJoCo bridge exposing robot state and simulated sensors as ROS 2 topics |
+| [`g1_mapping`](g1-ros2-workspace/src/g1_mapping) | Voxelized 3D LiDAR mapping and RViz visualization |
+| [`g1_navigation`](g1-ros2-workspace/src/g1_navigation) | SLAM, AMCL, A* navigation, command arbitration, and web gateway |
+| [`g1_conversation`](g1-ros2-workspace/src/g1_conversation) | Airport knowledge, speech engines, grounded answers, and RapidFuzz destination matching |
+| [`g1-navigation-ui`](g1-navigation-ui) | React/Vite console and browser voice/navigation integration |
+| `unitree_mujoco` / `unitree_rl_mjlab` | Simulator/model and RL environment submodules |
 
 ## Getting started
 
-Clone with submodules:
+### Prerequisites
+
+- Ubuntu with **ROS 2 Humble**; the current console launcher sources `/opt/ros/humble/setup.bash`.
+- Python **3.10** and `colcon`, with ROS dependencies installed for the workspace packages.
+- A prepared simulation environment at `g1-ros2-workspace/.venv` containing MuJoCo, NumPy, SciPy, ONNX Runtime, and PyYAML.
+- Node.js **22**, matching the console's Vite 7 setup.
+- A **Google Gemini API key** for grounded responses and embeddings.
+- Internet access for Gemini, the default Edge TTS backend, and initial model/dependency downloads.
+
+The voice launcher prepares a separate `.rag-venv` on first use. The simulation model is supplied by the repository's submodules. For environment-specific setup and controls, follow the [console guide](g1-navigation-ui/README.md).
+
+### 1. Clone and build
 
 ```bash
 git clone --recurse-submodules https://github.com/RafiMAA/Unitree_G1_EDU_Robot.git
-cd Unitree_G1_EDU_Robot
-```
+cd Unitree_G1_EDU_Robot/g1-ros2-workspace
 
-Build the ROS2 workspace:
-
-```bash
-cd g1-ros2-workspace
-source /opt/ros/jazzy/setup.bash
-colcon build --symlink-install
+unset PYTHONPATH
+export PYTHONNOUSERSITE=1
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install --packages-select \
+  g1_core g1_mujoco g1_mapping g1_navigation g1_conversation
 source install/setup.bash
 ```
 
-### Run the simulator + locomotion
+### 2. Start simulation
+
+In a terminal opened in `g1-ros2-workspace`:
 
 ```bash
-ros2 launch g1_mujoco sim.launch.py
+export PYTHONNOUSERSITE=1 ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=1 MUJOCO_GL=glfw
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+export PYTHONPATH="$PWD/.venv/lib/python3.10/site-packages:${PYTHONPATH:-}"
+ros2 launch g1_mujoco sim.launch.py \
+  start_rosbridge:=false cmd_vel_topic:=/cmd_vel_safe
 ```
 
-In another terminal, drive the robot manually:
+Keep this terminal running. The console manages its own rosbridge connection; simulation runs separately.
+
+### 3. Start the console
+
+In another terminal opened in `g1-navigation-ui`, with Node 22 available:
 
 ```bash
-ros2 run g1_core teleop_keyboard
+npm ci
+export G1_CONVERSATION_MODE=pipeline
+npm run dev
 ```
 
-`W`/`S` walk forward/backward, `A`/`D` turn, `Q`/`E` strafe, `+`/`-` adjust speed, `SPACE` stops, `X` quits.
+Set `GOOGLE_API_KEY` in the environment before starting the UI, or in the workspace's `.env` as described in the [voice guide](g1-navigation-ui/README.md#continuous-rag-conversation-and-spoken-navigation). Keep API keys out of version control.
 
-### Run mapping or navigation
+Open the address printed by Vite, normally `http://localhost:5173`. `npm run dev` starts the local process manager, rosbridge, and UI; the selected tab starts the required ROS services. Keep a single console instance per ROS domain. Use `npm run ui` when managing ROS services separately.
 
-Follow [`g1_mapping/README.md`](g1-ros2-workspace/src/g1_mapping/README.md) for 3D voxel mapping in RViz, or [`g1_navigation/README.md`](g1-ros2-workspace/src/g1_navigation/README.md) for SLAM + Nav2 with the React control UI (`npm install && npm run dev` in `g1-navigation-ui`).
+### 4. Prepare the environment and start a conversation
 
-### Run the conversational concierge
+1. Use **Mapping** to build and save a map, or import an existing YAML/image map pair.
+2. Use **Labeling locations** to save destination names and poses for that map.
+3. In **Navigate** or **RAG Conversation**, load the saved map and set **2D Pose Estimate** to the robot's actual position and heading.
+4. Wait for localization, then open **RAG Conversation**, allow microphone access, and select **Start conversation**.
+5. Ask a question or explicitly request guidance to a saved destination.
 
-```bash
-cd g1-ros2-workspace/src/g1_conversation
-pip install -r requirements.txt
-```
+For mobile browser audio, follow the [HTTPS setup](g1-navigation-ui/README.md#phone-microphone-and-speaker). For standalone 3D mapping and RViz, see the [mapping package guide](g1-ros2-workspace/src/g1_mapping/README.md).
 
-Set your Gemini API key (e.g. in a `.env` file), then:
+## Validation and limitations
 
-```bash
-ros2 run g1_conversation conversation
-```
+The repository includes dialogue, destination-matching, browser-audio, navigation, and simulation checks. The [conversational guide](g1-ros2-workspace/docs/concierge_guide.md#reproduce-automated-checks) documents how to reproduce them and separates synthetic ROS checks from headless MuJoCo locomotion checks.
 
-## Deploying to the physical G1
+- Live speech/model accuracy depends on audio conditions, language, network access, and the supplied knowledge base.
+- Routes depend on the saved map, label catalog, and a correct initial pose.
+- Navigation assumes planar indoor floors. Terrain, stairs, and footstep planning remain outside the current implementation.
+- Manual Mapping mode bypasses collision stopping and slowdown; emergency stop and stale-command handling remain active.
+- Physical deployment requires real localization/odometry, calibrated sensor transforms and motion parameters, and supervised hardware testing with an emergency stop.
 
-This repository targets simulation by default. Before running any package against real hardware:
+## Documentation
 
-- Replace MuJoCo ground-truth odometry with real LiDAR-inertial odometry or SLAM.
-- Verify the `map -> odom -> base_footprint -> pelvis -> mid360_link` TF chain is published by the robot.
-- Confirm `/g1/mid360/points` (sensor-data QoS) and `/g1/odom` are available, and that a G1 controller subscribes to `/cmd_vel_safe`.
-- Re-tune footprint, obstacle-height bands, stop distances, and LiDAR blind regions — current defaults are conservative starting points, not calibrated safety limits.
-- Use a safety operator and physical emergency stop. The navigation stack assumes flat indoor floors and does not handle drop-offs, stairs, slopes, or footstep planning.
+| Resource | Contents |
+| --- | --- |
+| [Navigation console](g1-navigation-ui/README.md) | Startup, maps, labels, voice interaction, browser audio, and HTTPS |
+| [A* navigation](g1-ros2-workspace/src/g1_navigation/README.md) | Planner, controller, parameters, recovery, and ROS interfaces |
+| [3D mapping](g1-ros2-workspace/src/g1_mapping/README.md) | LiDAR voxel mapping and RViz workflow |
+| [Conversational airport guide](g1-ros2-workspace/docs/concierge_guide.md) | Dialogue, gestures, narrated escorts, configuration, and checks |
+| [Browser voice and navigation](g1-ros2-workspace/docs/browser_voice_navigation.md) | Voice-to-goal handoff and validation scope |
+| [Robot communication architecture](Robot_Architecture.md) | Cloud, onboard computers, and Unitree interfaces |
+| [Project report](docs/report/g1_paper.pdf) | Research background, system design, and reported experiments |
 
-## Repository layout
+## Acknowledgments and license
 
-```
-.
-├── Robot_Architecture.md        # Cloud/robot/app communication architecture
-├── images/                      # Architecture diagrams
-├── g1-navigation-ui/            # React/Vite web control UI
-└── g1-ros2-workspace/
-    ├── src/
-    │   ├── g1_core/              # RL policy state machine, teleop
-    │   ├── g1_mujoco/            # MuJoCo <-> ROS2 bridge
-    │   ├── g1_mapping/           # Live 3D voxel mapping
-    │   ├── g1_navigation/        # SLAM, Nav2, web gateway
-    │   ├── g1_conversation/      # Airport passenger RAG voice assistant
-    │   └── unitree_mujoco/       # Submodule: Unitree's MuJoCo simulator
-    └── unitree_rl_mjlab/         # Submodule: Unitree's RL training environment
-```
+Developed as an **Embedded Systems Individual Project** at the **University of Moratuwa** for airport passenger assistance. Built on Unitree Robotics, ROS 2, MuJoCo, SLAM Toolbox, Nav2 localization/safety components, LangChain, FAISS, Whisper, RapidFuzz, and Google Gemini.
 
-## License
-
-Package-level licenses vary (MIT for `g1_conversation`, Apache-2.0 for `g1_mapping`/`g1_navigation`); see individual `package.xml` files. Add a top-level `LICENSE` file to declare the license for the repository as a whole.
-
-## Acknowledgments
-
-Built on Unitree Robotics' G1 EDU platform and SDKs, ROS2 Jazzy, Nav2, SLAM Toolbox, LangChain, and Google Gemini. Developed as a 5th-semester university capstone project for airport passenger assistance.
+Licenses are defined per package: `g1_conversation` uses MIT; `g1_mapping` and `g1_navigation` use Apache-2.0. See the corresponding `package.xml` files and the upstream submodule licenses.
